@@ -20,6 +20,7 @@ def find_config_diff(
             else:
                 if node[key] != default_node[key]:
                     root_node[key] = node[key]
+        # Empty subtrees are dropped so the result can be merged as a sparse override.
         return root_node if len(root_node) > 0 else None
 
     default_config = get_default_config()

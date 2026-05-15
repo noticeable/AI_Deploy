@@ -1,0 +1,32 @@
+task: classification
+device: cuda
+dataset:
+  name: ModelNet40
+  dataset_dir: ~/datasets
+  num_points: 1024
+  use_normals: False
+model:
+  type: pointnet2
+  name: pointnet2_cls
+  pointnet2:
+    dropout: 0.4
+    use_msg: True
+train:
+  batch_size: 16
+  optimizer: adam
+  base_lr: 0.001
+  weight_decay: 1e-4
+  output_dir: experiments/point_cloud/modelnet40/pointnet2_cls
+  log_period: 10
+  checkpoint_period: 10
+  dataloader:
+    num_workers: 2
+    drop_last: True
+    pin_memory: False
+validation:
+  batch_size: 16
+scheduler:
+  epochs: 200
+  type: cosine
+test:
+  batch_size: 16

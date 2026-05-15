@@ -74,6 +74,24 @@ def create_dataset(config: yacs.config.CfgNode,
                              transform=transform,
                              download=True)
             return dataset
+    elif config.dataset.name == 'FakeData':
+        transform = create_transform(config, is_train=is_train)
+        image_size = (config.dataset.n_channels, config.dataset.image_size,
+                      config.dataset.image_size)
+        if is_train:
+            train_dataset = torchvision.datasets.FakeData(size=max(config.train.batch_size * 2, 8),
+                                                          image_size=image_size,
+                                                          num_classes=config.dataset.n_classes,
+                                                          transform=transform)
+            val_dataset = torchvision.datasets.FakeData(size=max(config.validation.batch_size * 2, 8),
+                                                        image_size=image_size,
+                                                        num_classes=config.dataset.n_classes,
+                                                        transform=create_transform(config, is_train=False))
+            return train_dataset, val_dataset
+        return torchvision.datasets.FakeData(size=max(config.test.batch_size * 2, 8),
+                                             image_size=image_size,
+                                             num_classes=config.dataset.n_classes,
+                                             transform=transform)
     elif config.dataset.name == 'ImageNet':
         dataset_dir = pathlib.Path(config.dataset.dataset_dir).expanduser()
         train_transform = create_transform(config, is_train=True)

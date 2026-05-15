@@ -1,0 +1,57 @@
+model:
+  type: imagenet
+  name: cct
+  init_mode: transformer
+  cct:
+    patch_size: 16
+    emb_dim: 768
+    mlp_dim: 3072
+    num_heads: 12
+    num_layers: 12
+    dropout: 0.0
+    attention_dropout: 0.0
+    drop_path_rate: 0.0
+    classifier: token
+    representation_size: 0
+    qkv_bias: true
+    pretrained: false
+    pretrained_path: ''
+    pretrained_source: checkpoint
+    strict_pretrained_load: true
+    reset_classifier: true
+    interpolate_position_embedding: true
+device: cuda
+train:
+  resume: false
+  seed: 0
+  precision: O0
+  batch_size: 128
+  subdivision: 1
+  optimizer: adamw
+  base_lr: 0.0005
+  momentum: 0.9
+  nesterov: true
+  weight_decay: 0.05
+  no_weight_decay_on_bn: true
+  output_dir: experiments/imagenet/cct/exp00
+  log_period: 10
+  checkpoint_period: 10
+  use_tensorboard: true
+  distributed: false
+  dataloader:
+    num_workers: 8
+    drop_last: true
+    pin_memory: true
+validation:
+  batch_size: 128
+  dataloader:
+    num_workers: 8
+    drop_last: false
+    pin_memory: true
+scheduler:
+  epochs: 300
+  type: cosine
+tensorboard:
+  train_images: false
+  val_images: false
+  model_params: false

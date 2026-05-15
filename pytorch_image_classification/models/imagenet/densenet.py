@@ -6,7 +6,10 @@ from ..initializer import create_initializer
 
 
 class BasicBlock(nn.Module):
+    """Basic DenseNet growth block / DenseNet 基础增长块。"""
+
     def __init__(self, in_channels, out_channels, drop_rate):
+        """Build a single 3x3 dense block unit / 构建单个 3x3 dense block 单元。"""
         super().__init__()
 
         self.drop_rate = drop_rate
@@ -20,6 +23,7 @@ class BasicBlock(nn.Module):
                               bias=False)
 
     def forward(self, x):
+        """Append newly generated features to the input tensor / 将新生成特征与输入特征拼接。"""
         y = self.conv(F.relu(self.bn(x), inplace=True))
         if self.drop_rate > 0:
             y = F.dropout(y,
@@ -30,7 +34,10 @@ class BasicBlock(nn.Module):
 
 
 class BottleneckBlock(nn.Module):
+    """Bottleneck DenseNet growth block / DenseNet 瓶颈增长块。"""
+
     def __init__(self, in_channels, out_channels, drop_rate):
+        """Build a 1x1 + 3x3 bottleneck dense unit / 构建 1x1 + 3x3 的瓶颈 dense 单元。"""
         super().__init__()
 
         self.drop_rate = drop_rate
@@ -54,6 +61,7 @@ class BottleneckBlock(nn.Module):
                                bias=False)
 
     def forward(self, x):
+        """Expand then generate features before concatenation / 先扩展通道再生成特征并拼接回输入。"""
         y = self.conv1(F.relu(self.bn1(x), inplace=True))
         if self.drop_rate > 0:
             y = F.dropout(y,
@@ -70,7 +78,10 @@ class BottleneckBlock(nn.Module):
 
 
 class TransitionBlock(nn.Module):
+    """Transition block between DenseNet stages / DenseNet stage 之间的过渡块。"""
+
     def __init__(self, in_channels, out_channels, drop_rate):
+        """Build a channel compression and downsampling block / 构建通道压缩与下采样模块。"""
         super().__init__()
 
         self.drop_rate = drop_rate
@@ -84,6 +95,7 @@ class TransitionBlock(nn.Module):
                               bias=False)
 
     def forward(self, x):
+        """Compress channels and halve spatial resolution / 压缩通道并将空间分辨率减半。"""
         x = self.conv(F.relu(self.bn(x), inplace=True))
         if self.drop_rate > 0:
             x = F.dropout(x,
@@ -95,7 +107,10 @@ class TransitionBlock(nn.Module):
 
 
 class Network(nn.Module):
+    """DenseNet image classifier / DenseNet 图像分类网络。"""
+
     def __init__(self, config):
+        """Build DenseNet stages and classifier head / 构建 DenseNet 各 stage 与分类头。"""
         super().__init__()
 
         model_config = config.model.densenet
@@ -155,6 +170,7 @@ class Network(nn.Module):
         self.apply(initializer)
 
     def _make_stage(self, in_channels, n_blocks, block, add_transition_block):
+        """Assemble one DenseNet stage with optional transition / 组装单个 DenseNet stage，并按需追加 transition。"""
         stage = nn.Sequential()
         for index in range(n_blocks):
             stage.add_module(
@@ -170,6 +186,7 @@ class Network(nn.Module):
         return stage
 
     def _forward_conv(self, x):
+        """Run the convolutional DenseNet backbone / 执行 DenseNet 卷积主干前向。"""
         x = F.relu(self.bn(self.conv(x)), inplace=True)
         x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         x = self.stage1(x)
@@ -181,6 +198,7 @@ class Network(nn.Module):
         return x
 
     def forward(self, x):
+        """Run end-to-end classification / 执行端到端分类前向。"""
         x = self._forward_conv(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)

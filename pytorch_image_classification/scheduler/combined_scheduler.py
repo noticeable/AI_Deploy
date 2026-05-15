@@ -16,6 +16,8 @@ class CombinedScheduler:
                     self.schedulers.append(scheduler)
 
     def __call__(self, step):
+        # Map a global step to the active child scheduler by locating the cumulative step boundary,
+        # then convert the global step into the child's local step range.
         index = bisect.bisect_left(self._offsets, step) - 1
         index = max(0, min(index, len(self.schedulers) - 1))
         scheduler = self.schedulers[index]
@@ -32,6 +34,7 @@ class CombinedScheduler:
 
     @property
     def _offsets(self):
+        # Cumulative step boundaries for each child scheduler, starting from global step 0.
         return np.cumsum(np.concatenate([[0], self._steps]))
 
     def multiply_steps(self, val):

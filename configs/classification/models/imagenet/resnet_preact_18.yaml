@@ -1,0 +1,57 @@
+model:
+  type: imagenet
+  name: resnet_preact
+  init_mode: kaiming_fan_out
+  resnet_preact:
+    initial_channels: 64
+    block_type: basic
+    n_blocks:
+    - 2
+    - 2
+    - 2
+    - 2
+    remove_first_relu: false
+    add_last_bn: false
+    preact_stage:
+    - true
+    - true
+    - true
+    - true
+device: cuda
+train:
+  resume: false
+  seed: 0
+  precision: O0
+  batch_size: 256
+  subdivision: 1
+  optimizer: sgd
+  base_lr: 0.1
+  momentum: 0.9
+  nesterov: true
+  weight_decay: 1e-4
+  output_dir: experiments/imagenet/resnet_preact_18/exp00
+  log_period: 10
+  checkpoint_period: 10
+  use_tensorboard: true
+  distributed: false
+  dataloader:
+    num_workers: 8
+    drop_last: true
+    pin_memory: true
+validation:
+  batch_size: 256
+  dataloader:
+    num_workers: 8
+    drop_last: false
+    pin_memory: true
+scheduler:
+  epochs: 90
+  type: multistep
+  milestones:
+  - 30
+  - 60
+  lr_decay: 0.1
+tensorboard:
+  train_images: false
+  val_images: false
+  model_params: false

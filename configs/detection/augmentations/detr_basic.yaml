@@ -1,0 +1,12 @@
+augmentation:
+  use_random_horizontal_flip: True
+  use_mosaic: False
+  use_mixup: True
+  use_random_affine: True
+  mixup_alpha: 0.2
+  affine_degrees: 5.0
+  affine_translate: 0.05
+  affine_scale_range: [0.9, 1.1]
+  affine_shear_degrees: 1.0
+  affine_perspective: 0.0
+  normalize: True

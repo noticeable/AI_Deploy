@@ -1,0 +1,36 @@
+task: segmentation
+device: cuda
+dataset:
+  name: ShapeNetPart
+  dataset_dir: ~/datasets
+  num_points: 2048
+  use_normals: False
+model:
+  type: kpconv
+  name: kpconv_seg
+  kpconv:
+    k: 16
+    encoder_dims: [64, 128, 256]
+    kernel_points: 15
+    sigma: 0.1
+    decoder_dim: 128
+    dropout: 0.3
+train:
+  batch_size: 12
+  optimizer: adamw
+  base_lr: 0.0005
+  weight_decay: 1e-4
+  output_dir: experiments/point_cloud/shapenetpart/kpconv_seg
+  log_period: 10
+  checkpoint_period: 10
+  dataloader:
+    num_workers: 2
+    drop_last: True
+    pin_memory: False
+validation:
+  batch_size: 12
+scheduler:
+  epochs: 250
+  type: cosine
+test:
+  batch_size: 12

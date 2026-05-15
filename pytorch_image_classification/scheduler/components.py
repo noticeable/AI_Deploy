@@ -42,5 +42,6 @@ class LinearScheduler:
         self.lr_end = lr_end
 
     def __call__(self, step):
+        # step is expected in [0, steps], so the final call lands exactly on lr_end.
         return self.lr_start + (self.lr_end -
                                 self.lr_start) * step / self.steps

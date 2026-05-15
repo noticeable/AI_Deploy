@@ -1,0 +1,43 @@
+device: cuda
+dataset:
+  name: COCO
+  format: coco
+  dataset_dir: data/coco
+  train_ann: data/coco/annotations/instances_train2017.json
+  val_ann: data/coco/annotations/instances_val2017.json
+  image_size: 640
+  class_names: []
+model:
+  meta_architecture: yolo
+  name: yolov8_n
+assignment:
+  name: dynamic_k
+  dynamic_k_topk: 10
+  cls_cost: 1.0
+  iou_cost: 3.0
+  box_loss: iou
+  iou_variant: ciou
+  yolo:
+    name: dynamic_k
+train:
+  batch_size: 8
+  optimizer: adamw
+  base_lr: 0.0005
+  weight_decay: 0.0001
+  output_dir: experiments/detection/yolo_dynamic_k/exp00
+  log_period: 10
+  checkpoint_period: 1
+validation:
+  batch_size: 8
+scheduler:
+  epochs: 12
+  type: cosine
+augmentation:
+  use_random_horizontal_flip: True
+  use_mosaic: False
+  use_mixup: False
+  normalize: True
+eval:
+  nms_type: hard
+  soft_nms_sigma: 0.5
+  soft_nms_score_threshold: 0.001

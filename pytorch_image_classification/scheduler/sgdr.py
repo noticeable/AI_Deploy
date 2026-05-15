@@ -9,6 +9,7 @@ class SGDRScheduler(CombinedScheduler):
         step_list = [T0]
         while sum(step_list) < steps:
             step_list.append(int(step_list[-1] * T_mul))
+        # This implementation expects restarts to tile the full schedule exactly.
         assert sum(step_list) == steps
         schedulers = [
             CosineScheduler(step, base_lr, lr_min_factor) for step in step_list

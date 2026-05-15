@@ -1,0 +1,18 @@
+dataset:
+  format: det_seg_yolo
+  dataset_dir: ''
+  image_size: 64
+  n_classes: 1
+  class_names: ['object']
+model:
+  meta_architecture: det_seg
+  name: shared_backbone_tiny
+train:
+  output_dir: experiments/det_seg/shared_backbone_tiny
+  batch_size: 1
+  log_period: 1
+  checkpoint_period: 1
+validation:
+  batch_size: 1
+scheduler:
+  epochs: 1

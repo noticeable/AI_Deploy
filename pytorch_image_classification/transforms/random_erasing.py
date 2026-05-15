@@ -31,6 +31,7 @@ class RandomErasing:
                 y0 = np.random.randint(0, h - mask_h)
                 x1 = x0 + mask_w
                 y1 = y0 + mask_h
+                # Fill with a scalar so the same random value is broadcast to every channel.
                 image[y0:y1, x0:x1] = np.random.uniform(0, 1)
                 break
 

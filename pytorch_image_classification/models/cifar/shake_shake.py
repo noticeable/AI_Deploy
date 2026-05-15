@@ -57,6 +57,7 @@ class SkipConnection(nn.Module):
         y1 = F.avg_pool2d(x, kernel_size=1, stride=self.stride, padding=0)
         y1 = self.conv1(y1)
 
+        # The shifted second branch reproduces the channel-padding shortcut from Shake-Shake.
         y2 = F.pad(x[:, :, 1:, 1:], (0, 1, 0, 1))
         y2 = F.avg_pool2d(y2, kernel_size=1, stride=self.stride, padding=0)
         y2 = self.conv2(y2)
@@ -88,6 +89,7 @@ class BasicBlock(nn.Module):
         if self.training:
             shake_config = self.shake_config
         else:
+            # Evaluation uses a deterministic average instead of random shaking.
             shake_config = (False, False, False)
 
         alpha, beta = get_alpha_beta(x.size(0), shake_config, x.device)
@@ -143,7 +145,7 @@ class Network(nn.Module):
                                        block,
                                        stride=2)
 
-        # compute conv feature size
+        # Run a dummy forward pass so the classifier input stays aligned with the conv stack.
         with torch.no_grad():
             dummy_data = torch.zeros(
                 (1, config.dataset.n_channels, config.dataset.image_size,

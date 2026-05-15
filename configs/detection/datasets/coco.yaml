@@ -1,0 +1,7 @@
+dataset:
+  name: COCO
+  format: coco
+  dataset_dir: data/coco
+  train_ann: data/coco/annotations/instances_train2017.json
+  val_ann: data/coco/annotations/instances_val2017.json
+  class_names: []

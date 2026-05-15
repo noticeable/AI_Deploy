@@ -1,0 +1,1 @@
+_base_: ../classification/presets/imagenet/cvt_large.yaml

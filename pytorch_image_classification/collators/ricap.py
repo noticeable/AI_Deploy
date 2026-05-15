@@ -25,6 +25,7 @@ def ricap(
         y0 = np.random.randint(0, image_h - h + 1)
         patches.append(data[indices, :, y0:y0 + h, x0:x0 + w])
         labels.append(targets[indices])
+        # Each target contributes in proportion to the area of its pasted quadrant.
         label_weights.append(h * w / (image_h * image_w))
 
     data = torch.cat(

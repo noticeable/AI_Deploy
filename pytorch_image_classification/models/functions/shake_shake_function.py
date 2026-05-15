@@ -43,6 +43,7 @@ def get_alpha_beta(batch_size, shake_config, device):
     else:
         beta = torch.FloatTensor([0.5])
 
+    # Per-image coefficients broadcast across channel and spatial dimensions.
     alpha = alpha.to(device)
     beta = beta.to(device)
 

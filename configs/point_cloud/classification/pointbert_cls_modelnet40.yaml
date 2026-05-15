@@ -1,0 +1,37 @@
+task: classification
+device: cuda
+dataset:
+  name: ModelNet40
+  dataset_dir: ~/datasets
+  num_points: 1024
+  use_normals: False
+model:
+  type: pointbert
+  name: pointbert_cls
+  pointbert:
+    num_groups: 128
+    group_size: 32
+    embed_dim: 256
+    depth: 6
+    num_heads: 8
+    mlp_ratio: 4.0
+    dropout: 0.1
+train:
+  batch_size: 16
+  optimizer: adamw
+  base_lr: 0.0005
+  weight_decay: 0.05
+  output_dir: experiments/point_cloud/modelnet40/pointbert_cls
+  log_period: 10
+  checkpoint_period: 10
+  dataloader:
+    num_workers: 2
+    drop_last: True
+    pin_memory: False
+validation:
+  batch_size: 16
+scheduler:
+  epochs: 200
+  type: cosine
+test:
+  batch_size: 16

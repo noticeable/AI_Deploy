@@ -46,6 +46,7 @@ class LARSOptimizer(torch.optim.Optimizer):
                 grad_norm = torch.norm(d_p)
                 local_lr = weight_norm / (eps + grad_norm +
                                           weight_decay * weight_norm)
+                # Small-norm parameters skip trust-ratio scaling to avoid unstable updates.
                 local_lr = torch.where(weight_norm < thresh,
                                        torch.ones_like(local_lr), local_lr)
 

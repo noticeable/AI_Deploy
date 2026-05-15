@@ -35,6 +35,7 @@ class LabelSmoothingLoss:
 
         onehot = onehot_encoding(
             targets, self.n_classes).type_as(predictions).to(device)
+        # Smoothing redistributes epsilon uniformly across all classes.
         targets = onehot * (1 - self.epsilon) + torch.ones_like(onehot).to(
             device) * self.epsilon / self.n_classes
         loss = cross_entropy_loss(predictions, targets, self.reduction)

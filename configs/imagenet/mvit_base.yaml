@@ -1,0 +1,1 @@
+_base_: ../classification/presets/imagenet/mvit_base.yaml

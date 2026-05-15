@@ -1,0 +1,52 @@
+_base_:
+- ../../datasets/imagenet.yaml
+- ../../models/imagenet/swin_base.yaml
+device: cuda
+train:
+  resume: false
+  seed: 0
+  precision: O0
+  batch_size: 128
+  subdivision: 1
+  optimizer: adamw
+  base_lr: 0.0005
+  momentum: 0.9
+  nesterov: true
+  weight_decay: 0.05
+  no_weight_decay_on_bn: true
+  output_dir: experiments/imagenet/swin_base/exp00
+  log_period: 10
+  checkpoint_period: 10
+  use_tensorboard: true
+  distributed: false
+  dataloader:
+    num_workers: 8
+    drop_last: true
+    pin_memory: true
+validation:
+  batch_size: 128
+  dataloader:
+    num_workers: 8
+    drop_last: false
+    pin_memory: true
+scheduler:
+  epochs: 300
+  type: cosine
+augmentation:
+  use_random_crop: true
+  use_random_horizontal_flip: true
+  use_cutout: false
+  use_random_erasing: false
+  use_dual_cutout: false
+  use_mixup: false
+  use_ricap: false
+  use_cutmix: false
+  use_label_smoothing: false
+tta:
+  use_resize: true
+  use_center_crop: true
+  resize: 256
+tensorboard:
+  train_images: false
+  val_images: false
+  model_params: false

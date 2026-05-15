@@ -1,0 +1,32 @@
+task: segmentation
+device: cuda
+dataset:
+  name: ShapeNetPart
+  dataset_dir: ~/datasets
+  num_points: 2048
+  use_normals: False
+model:
+  type: pointnet
+  name: pointnet_seg
+  pointnet:
+    stn_regularization_weight: 0.001
+    dropout: 0.3
+train:
+  batch_size: 12
+  optimizer: adam
+  base_lr: 0.001
+  weight_decay: 1e-4
+  output_dir: experiments/point_cloud/shapenet_part/pointnet_seg
+  log_period: 10
+  checkpoint_period: 10
+  dataloader:
+    num_workers: 2
+    drop_last: True
+    pin_memory: False
+validation:
+  batch_size: 12
+scheduler:
+  epochs: 200
+  type: cosine
+test:
+  batch_size: 12

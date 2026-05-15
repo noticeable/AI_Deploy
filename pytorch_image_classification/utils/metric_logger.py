@@ -12,4 +12,5 @@ class AverageMeter:
         self.val = val
         self.sum += val * num
         self.count += num
+        # Maintain a weighted running average so callers can pass either per-sample or per-batch values.
         self.avg = self.sum / self.count

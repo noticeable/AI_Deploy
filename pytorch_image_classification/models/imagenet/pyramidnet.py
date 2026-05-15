@@ -7,9 +7,11 @@ from ..initializer import create_initializer
 
 
 class BasicBlock(nn.Module):
+    """Basic residual block used by PyramidNet / PyramidNet 使用的基础残差块。"""
     expansion = 1
 
     def __init__(self, in_channels, out_channels, stride):
+        """Build a two-convolution PyramidNet basic block / 构建双卷积的 PyramidNet 基础块。"""
         super().__init__()
 
         self.bn1 = nn.BatchNorm2d(in_channels)
@@ -34,6 +36,7 @@ class BasicBlock(nn.Module):
             self.shortcut = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
+        """Apply residual update with channel-padding shortcut / 通过带通道补零的 shortcut 应用残差更新。"""
         y = self.bn1(x)
         y = self.conv1(y)
 
@@ -51,9 +54,11 @@ class BasicBlock(nn.Module):
 
 
 class BottleneckBlock(nn.Module):
+    """Bottleneck residual block used by PyramidNet / PyramidNet 使用的瓶颈残差块。"""
     expansion = 4
 
     def __init__(self, in_channels, out_channels, stride):
+        """Build a 1x1-3x3-1x1 PyramidNet bottleneck block / 构建 1x1-3x3-1x1 的 PyramidNet 瓶颈块。"""
         super().__init__()
 
         bottleneck_channels = out_channels // self.expansion
@@ -88,6 +93,7 @@ class BottleneckBlock(nn.Module):
             self.shortcut = nn.AvgPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
+        """Apply bottleneck residual update with optional downsampling / 应用带可选下采样的瓶颈残差更新。"""
         y = self.bn1(x)
         y = self.conv1(y)
 
@@ -108,7 +114,10 @@ class BottleneckBlock(nn.Module):
 
 
 class Network(nn.Module):
+    """PyramidNet image classifier / PyramidNet 图像分类网络。"""
+
     def __init__(self, config):
+        """Build progressively widened residual stages and classifier / 构建逐步增宽的残差 stage 与分类器。"""
         super().__init__()
 
         model_config = config.model.pyramidnet
@@ -178,6 +187,7 @@ class Network(nn.Module):
         self.apply(initializer)
 
     def _make_stage(self, n_channels, n_blocks, block, stride):
+        """Assemble one PyramidNet residual stage / 组装单个 PyramidNet 残差 stage。"""
         stage = nn.Sequential()
         for index in range(n_blocks):
             block_name = f'block{index + 1}'
@@ -194,6 +204,7 @@ class Network(nn.Module):
         return stage
 
     def _forward_conv(self, x):
+        """Run the convolutional PyramidNet backbone / 执行 PyramidNet 卷积主干前向。"""
         x = F.relu(self.bn(self.conv(x)), inplace=True)
         x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         x = self.stage1(x)
@@ -206,6 +217,7 @@ class Network(nn.Module):
         return x
 
     def forward(self, x):
+        """Run end-to-end classification / 执行端到端分类前向。"""
         x = self._forward_conv(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)

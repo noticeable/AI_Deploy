@@ -1,0 +1,56 @@
+model:
+  type: imagenet
+  name: vgg
+  init_mode: kaiming_fan_out
+  vgg:
+    n_channels:
+    - 64
+    - 128
+    - 256
+    - 512
+    - 512
+    n_layers:
+    - 2
+    - 2
+    - 3
+    - 3
+    - 3
+    use_bn: true
+device: cuda
+train:
+  resume: false
+  seed: 0
+  precision: O0
+  batch_size: 256
+  subdivision: 8
+  optimizer: sgd
+  base_lr: 0.01
+  momentum: 0.9
+  nesterov: true
+  weight_decay: 5e-4
+  output_dir: experiments/imagenet/vgg16/exp00
+  log_period: 10
+  checkpoint_period: 10
+  use_tensorboard: true
+  distributed: false
+  dataloader:
+    num_workers: 8
+    drop_last: true
+    pin_memory: true
+validation:
+  batch_size: 256
+  dataloader:
+    num_workers: 8
+    drop_last: false
+    pin_memory: true
+scheduler:
+  epochs: 90
+  type: multistep
+  milestones:
+  - 30
+  - 60
+  lr_decay: 0.1
+tensorboard:
+  train_images: false
+  val_images: false
+  model_params: false

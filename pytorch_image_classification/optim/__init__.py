@@ -4,20 +4,43 @@ from .adabound import AdaBound, AdaBoundW
 from .lars import LARSOptimizer
 
 
+_NO_WEIGHT_DECAY_KEYWORDS = (
+    'bias',
+    'bn',
+    'norm',
+    'pos_embedding',
+    'pos_embed',
+    'position_embedding',
+    'position_embeddings',
+    'cls_token',
+    'class_token',
+)
+
+
 def get_param_list(config, model):
     if config.train.no_weight_decay_on_bn:
-        param_list = []
+        decay_params = []
+        no_decay_params = []
         for name, params in model.named_parameters():
-            if 'conv.weight' in name:
-                param_list.append({
-                    'params': params,
-                    'weight_decay': config.train.weight_decay,
-                })
+            if not params.requires_grad:
+                continue
+            if params.ndim <= 1 or any(keyword in name
+                                       for keyword in _NO_WEIGHT_DECAY_KEYWORDS):
+                no_decay_params.append(params)
             else:
-                param_list.append({
-                    'params': params,
-                    'weight_decay': 0,
-                })
+                decay_params.append(params)
+
+        param_list = []
+        if decay_params:
+            param_list.append({
+                'params': decay_params,
+                'weight_decay': config.train.weight_decay,
+            })
+        if no_decay_params:
+            param_list.append({
+                'params': no_decay_params,
+                'weight_decay': 0,
+            })
     else:
         param_list = [{
             'params': list(model.parameters()),
@@ -38,6 +61,10 @@ def create_optimizer(config, model):
         optimizer = torch.optim.Adam(params,
                                      lr=config.train.base_lr,
                                      betas=config.optim.adam.betas)
+    elif config.train.optimizer == 'adamw':
+        optimizer = torch.optim.AdamW(params,
+                                      lr=config.train.base_lr,
+                                      betas=config.optim.adam.betas)
     elif config.train.optimizer == 'amsgrad':
         optimizer = torch.optim.Adam(params,
                                      lr=config.train.base_lr,

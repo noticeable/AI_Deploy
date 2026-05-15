@@ -1,0 +1,49 @@
+task: segmentation
+device: cuda
+dataset:
+  name: ShapeNetPart
+  dataset_dir: ~/datasets
+  num_points: 2048
+  use_normals: False
+model:
+  type: pointtransformer
+  name: pointtransformer_v2
+  pointtransformer:
+    version: v2
+    embed_dim: 64
+    encoder_dims: [64, 128, 256]
+    decoder_dims: [256, 128, 64]
+    depth: [2, 2, 2]
+    num_heads: [4, 8, 16]
+    k: 16
+    kv_k: 16
+    mlp_ratio: 4.0
+    qkv_bias: True
+    use_relative_position: True
+    sampling_ratio: [1.0, 0.5, 0.25]
+    dropout: 0.1
+    decoder_dim: 128
+    pretrained: False
+    pretrained_path: ''
+    pretrained_source: official
+    strict_pretrained_load: False
+    reset_classifier: True
+train:
+  batch_size: 12
+  optimizer: adamw
+  base_lr: 0.0005
+  weight_decay: 1e-4
+  output_dir: experiments/point_cloud/shapenet_part/pointtransformer_v2
+  log_period: 10
+  checkpoint_period: 10
+  dataloader:
+    num_workers: 2
+    drop_last: True
+    pin_memory: False
+validation:
+  batch_size: 12
+scheduler:
+  epochs: 250
+  type: cosine
+test:
+  batch_size: 12

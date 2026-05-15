@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-import argparse
-import pathlib
 import time
 
 import numpy as np
@@ -16,28 +14,18 @@ from pytorch_image_classification import (
     create_dataloader,
     create_loss,
     create_model,
-    get_default_config,
-    update_config,
+)
+from pytorch_image_classification.tasks.classification import (
+    infer_task_family,
+    load_export_config,
+    parse_export_args,
+    resolve_export_output_dir,
 )
 from pytorch_image_classification.utils import (
     AverageMeter,
     create_logger,
     get_rank,
 )
-
-
-def load_config():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('options', default=None, nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-
-    config = get_default_config()
-    config.merge_from_file(args.config)
-    config.merge_from_list(args.options)
-    update_config(config)
-    config.freeze()
-    return config
 
 
 def evaluate(config, model, test_loader, loss_func, logger):
@@ -85,14 +73,8 @@ def evaluate(config, model, test_loader, loss_func, logger):
     return preds, probs, labels, loss_meter.avg, accuracy
 
 
-def main():
-    config = load_config()
-
-    if config.test.output_dir is None:
-        output_dir = pathlib.Path(config.test.checkpoint).parent
-    else:
-        output_dir = pathlib.Path(config.test.output_dir)
-        output_dir.mkdir(exist_ok=True, parents=True)
+def run_export(config):
+    output_dir = resolve_export_output_dir(config)
 
     logger = create_logger(name=__name__, distributed_rank=get_rank())
 
@@ -110,13 +92,24 @@ def main():
     preds, probs, labels, loss, acc = evaluate(config, model, test_loader,
                                                test_loss, logger)
 
-    output_path = output_dir / f'predictions.npz'
+    output_path = output_dir / 'predictions.npz'
     np.savez(output_path,
              preds=preds,
              probs=probs,
              labels=labels,
              loss=loss,
              acc=acc)
+
+
+def main():
+    args = parse_export_args()
+    config = load_export_config(args)
+    task_family = infer_task_family(config)
+    if task_family == 'cifar':
+        print('Routing to export_cifar.py entrypoint.')
+    else:
+        print('Routing to export_imagenet.py entrypoint.')
+    run_export(config)
 
 
 if __name__ == '__main__':

@@ -21,6 +21,7 @@ def create_dataloader(
     if is_train:
         train_dataset, val_dataset = create_dataset(config, is_train)
 
+        # Use DistributedSampler when DDP is active so each rank sees a distinct data shard.
         if dist.is_available() and dist.is_initialized():
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset)
@@ -64,6 +65,7 @@ def create_dataloader(
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
         else:
             sampler = None
+        # Test/inference always preserves deterministic sample order from the sampler/data source.
         test_loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=config.test.batch_size,

@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import argparse
 import pathlib
 import time
 
@@ -23,10 +22,20 @@ from pytorch_image_classification import (
     create_model,
     create_optimizer,
     create_scheduler,
-    get_default_config,
-    update_config,
 )
 from pytorch_image_classification.config.config_node import ConfigNode
+from pytorch_image_classification.models.qat import (
+    apply_qat_epoch_controls,
+    convert_qat_model,
+    is_qat_enabled,
+    is_qat_supported_model,
+    prepare_model_for_qat,
+)
+from pytorch_image_classification.tasks.classification import (
+    infer_task_family,
+    load_train_config,
+    parse_train_args,
+)
 from pytorch_image_classification.utils import (
     AverageMeter,
     DummyWriter,
@@ -43,31 +52,6 @@ from pytorch_image_classification.utils import (
 )
 
 global_step = 0
-
-
-def load_config():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str)
-    parser.add_argument('--resume', type=str, default='')
-    parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument('options', default=None, nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-
-    config = get_default_config()
-    if args.config is not None:
-        config.merge_from_file(args.config)
-    config.merge_from_list(args.options)
-    if not torch.cuda.is_available():
-        config.device = 'cpu'
-        config.train.dataloader.pin_memory = False
-    if args.resume != '':
-        config_path = pathlib.Path(args.resume) / 'config.yaml'
-        config.merge_from_file(config_path.as_posix())
-        config.merge_from_list(['train.resume', True])
-    config.merge_from_list(['train.dist.local_rank', args.local_rank])
-    config = update_config(config)
-    config.freeze()
-    return config
 
 
 def subdivide_batch(config, data, targets):
@@ -324,10 +308,8 @@ def validate(epoch, config, model, loss_func, val_loader, logger,
                 tensorboard_writer.add_histogram(name, param, epoch)
 
 
-def main():
+def run_training(config):
     global global_step
-
-    config = load_config()
 
     set_seed(config)
     setup_cudnn(config)
@@ -365,6 +347,11 @@ def main():
     train_loader, val_loader = create_dataloader(config, is_train=True)
 
     model = create_model(config)
+    qat_state = None
+    if is_qat_enabled(config):
+        if not is_qat_supported_model(config):
+            raise ValueError(f'QAT is not supported for model {(config.model.type, config.model.name)}')
+        model, qat_state = prepare_model_for_qat(config, model)
     macs, n_params = count_op(config, model)
     logger.info(f'MACs   : {macs}')
     logger.info(f'#params: {n_params}')
@@ -421,6 +408,7 @@ def main():
         epoch += 1
 
         np.random.seed(seed)
+        apply_qat_epoch_controls(config, model, epoch, qat_state)
         train(epoch, config, model, optimizer, scheduler, train_loss,
               train_loader, logger, tensorboard_writer, tensorboard_writer2)
 
@@ -443,6 +431,17 @@ def main():
 
     tensorboard_writer.close()
     tensorboard_writer2.close()
+
+
+def main():
+    args = parse_train_args()
+    config = load_train_config(args)
+    task_family = infer_task_family(config)
+    if task_family == 'cifar':
+        print('Routing to train_cifar.py entrypoint.')
+    else:
+        print('Routing to train_imagenet.py entrypoint.')
+    run_training(config)
 
 
 if __name__ == '__main__':

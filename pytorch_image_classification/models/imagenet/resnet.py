@@ -6,9 +6,11 @@ from ..initializer import create_initializer
 
 
 class BasicBlock(nn.Module):
+    """Basic residual block used by ResNet / ResNet 使用的基础残差块。"""
     expansion = 1
 
     def __init__(self, in_channels, out_channels, stride):
+        """Build a two-layer residual block / 构建双层残差块。"""
         super().__init__()
 
         self.conv1 = nn.Conv2d(
@@ -41,6 +43,7 @@ class BasicBlock(nn.Module):
             self.shortcut.add_module('bn', nn.BatchNorm2d(out_channels))  # BN
 
     def forward(self, x):
+        """Apply residual update and post-activation / 应用残差更新并在相加后激活。"""
         y = F.relu(self.bn1(self.conv1(x)), inplace=True)
         y = self.bn2(self.conv2(y))
         y += self.shortcut(x)
@@ -49,9 +52,11 @@ class BasicBlock(nn.Module):
 
 
 class BottleneckBlock(nn.Module):
+    """Bottleneck residual block used by ResNet / ResNet 使用的瓶颈残差块。"""
     expansion = 4
 
     def __init__(self, in_channels, out_channels, stride):
+        """Build a 1x1-3x3-1x1 residual bottleneck / 构建 1x1-3x3-1x1 残差瓶颈块。"""
         super().__init__()
 
         bottleneck_channels = out_channels // self.expansion
@@ -95,6 +100,7 @@ class BottleneckBlock(nn.Module):
             self.shortcut.add_module('bn', nn.BatchNorm2d(out_channels))  # BN
 
     def forward(self, x):
+        """Apply bottleneck residual transform and shortcut merge / 应用瓶颈残差变换并与 shortcut 融合。"""
         y = F.relu(self.bn1(self.conv1(x)), inplace=True)
         y = F.relu(self.bn2(self.conv2(y)), inplace=True)
         y = self.bn3(self.conv3(y))  # not apply ReLU
@@ -104,7 +110,10 @@ class BottleneckBlock(nn.Module):
 
 
 class Network(nn.Module):
+    """ResNet image classifier / ResNet 图像分类网络。"""
+
     def __init__(self, config):
+        """Build ResNet stages and classifier head / 构建 ResNet 各 stage 与分类头。"""
         super().__init__()
 
         model_config = config.model.resnet
@@ -170,6 +179,7 @@ class Network(nn.Module):
         self.apply(initializer)
 
     def _make_stage(self, in_channels, out_channels, n_blocks, block, stride):
+        """Assemble one ResNet stage from repeated residual blocks / 由重复残差块组装单个 ResNet stage。"""
         stage = nn.Sequential()
         for index in range(n_blocks):
             block_name = f'block{index + 1}'
@@ -183,6 +193,7 @@ class Network(nn.Module):
         return stage
 
     def _forward_conv(self, x):
+        """Run the convolutional ResNet backbone / 执行 ResNet 卷积主干前向。"""
         x = F.relu(self.bn(self.conv(x)), inplace=True)
         x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
         x = self.stage1(x)
@@ -193,6 +204,7 @@ class Network(nn.Module):
         return x
 
     def forward(self, x):
+        """Run end-to-end classification / 执行端到端分类前向。"""
         x = self._forward_conv(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)

@@ -77,6 +77,8 @@ class ToTensor:
     @staticmethod
     def _to_tensor(data: np.ndarray) -> torch.Tensor:
         if len(data.shape) == 3:
+            # Convert image arrays from HWC to CHW to match PyTorch convolution input layout.
             return torch.from_numpy(data.transpose(2, 0, 1).astype(np.float32))
         else:
+            # Add a singleton channel dimension for grayscale-like inputs.
             return torch.from_numpy(data[None, :, :].astype(np.float32))

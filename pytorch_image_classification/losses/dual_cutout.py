@@ -12,6 +12,7 @@ class DualCutoutLoss:
     def __call__(self, predictions: torch.Tensor,
                  targets: torch.Tensor) -> torch.Tensor:
         predictions1, predictions2 = predictions[:, 0], predictions[:, 1]
+        # The MSE term keeps the paired cutout predictions from drifting too far apart.
         return (self.loss_func(predictions1, targets) + self.loss_func(
             predictions2, targets)) * 0.5 + self.alpha * F.mse_loss(
                 predictions1, predictions2)

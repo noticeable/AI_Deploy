@@ -1,0 +1,1 @@
+_base_: ../classification/presets/imagenet/t2t_vit.yaml

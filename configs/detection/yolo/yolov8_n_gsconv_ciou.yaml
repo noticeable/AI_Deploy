@@ -1,0 +1,39 @@
+device: cuda
+dataset:
+  name: COCO
+  format: coco
+  dataset_dir: data/coco
+  train_ann: data/coco/annotations/instances_train2017.json
+  val_ann: data/coco/annotations/instances_val2017.json
+  image_size: 640
+  class_names: []
+model:
+  meta_architecture: yolo
+  name: yolov8_n
+  yolo:
+    block: gsconv
+assignment:
+  name: first_box
+  box_loss: iou
+  iou_variant: ciou
+  box_loss_weight: 1.0
+  yolo:
+    name: iou
+train:
+  batch_size: 8
+  optimizer: adamw
+  base_lr: 0.0005
+  weight_decay: 0.0001
+  output_dir: experiments/detection/yolo_gsconv_ciou/exp00
+  log_period: 10
+  checkpoint_period: 1
+validation:
+  batch_size: 8
+scheduler:
+  epochs: 12
+  type: cosine
+augmentation:
+  use_random_horizontal_flip: True
+  use_mosaic: False
+  use_mixup: False
+  normalize: True
