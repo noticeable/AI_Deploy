@@ -61,8 +61,16 @@ def main():
             {
                 'name': 'structured',
                 'output': structured_path,
-                'extra': ['prune.method', 'structured_ln', 'prune.amount', '0.25', 'prune.save_name', 'model_structured_pruned.pth'],
-                'verify_mode': 'standard',
+                'extra': [
+                    'prune.backend', 'torch_pruning',
+                    'prune.method', 'tp_magnitude',
+                    'prune.target', 'backbone',
+                    'prune.amount', '0.25',
+                    'prune.save_name', 'model_structured_pruned.pth',
+                    'prune.example_batch_size', '1',
+                    'prune.example_image_size', '640',
+                ],
+                'verify_mode': 'torch_pruning',
             },
             {
                 'name': 'torch_pruning',

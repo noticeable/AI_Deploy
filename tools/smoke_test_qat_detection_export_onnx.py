@@ -41,6 +41,7 @@ def main():
             'device', 'cpu',
             'train.output_dir', str(checkpoint_dir),
             'train.batch_size', '2',
+            'train.dataloader.drop_last', 'True',
             'train.dataloader.num_workers', '0',
             'validation.batch_size', '2',
             'validation.dataloader.num_workers', '0',
@@ -49,7 +50,7 @@ def main():
             'train.log_period', '1',
             'dataset.name', 'SmokeCOCO',
             'dataset.n_classes', '3',
-            'dataset.image_size', '64',
+            'dataset.image_size', '128',
             'dataset.dataset_dir', str(tmp),
             'dataset.train_ann', '',
             'dataset.val_ann', '',
@@ -76,7 +77,7 @@ def main():
             'device', 'cpu',
             'dataset.name', 'SmokeCOCO',
             'dataset.n_classes', '3',
-            'dataset.image_size', '64',
+            'dataset.image_size', '128',
             'dataset.dataset_dir', str(tmp),
             'dataset.train_ann', '',
             'dataset.val_ann', '',
@@ -84,6 +85,7 @@ def main():
             'export.output_file', str(onnx_path),
             'export.quantized_onnx', 'True',
             'export.quantized_onnx_backend', 'onnxruntime_dynamic',
+            'eval.nms_type', 'hard',
             'model.yolo.dense_head.type', 'fpn_multi',
             'qat.enabled', 'True',
         ]
@@ -111,7 +113,7 @@ def main():
                 'node_types={node.op_type for node in model.graph.node}; '
                 f"session=ort.InferenceSession(r'{onnx_path.as_posix()}', providers=['CPUExecutionProvider']); "
                 'input_meta=session.get_inputs()[0]; '
-                "x=np.random.randn(1, 3, 64, 64).astype(np.float32); "
+                "x=np.random.randn(1, 3, 128, 128).astype(np.float32); "
                 'outputs=session.run(None, {input_meta.name: x}); '
                 "print('OK | detection quantized onnx export | nodes=', len(model.graph.node), 'has_quant_ops=', any(op in node_types for op in ('MatMulInteger','DynamicQuantizeLinear','QuantizeLinear','DequantizeLinear')), 'output_shape=', tuple(outputs[0].shape))"
             )

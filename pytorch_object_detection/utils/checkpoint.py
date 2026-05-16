@@ -18,6 +18,16 @@ def _infer_tinyyolo_channels(model_state, fallback_channels):
     channels = list(fallback_channels)
     if not channels:
         return channels
+    if len(channels) == 4:
+        stage_prefixes = ('stem.block.0', 'stage2.blocks.0.block.0', 'stage3.blocks.0.block.0', 'stage4.blocks.0.block.0')
+        inferred_channels = []
+        for prefix, fallback in zip(stage_prefixes, channels):
+            weight = model_state.get(f'{prefix}.weight')
+            if weight is not None and getattr(weight, 'ndim', 0) >= 4:
+                inferred_channels.append(int(weight.shape[0]))
+            else:
+                inferred_channels.append(int(fallback))
+        return inferred_channels
     head_weight = model_state.get('neck.heads.2.box_head.weight')
     if head_weight is not None and getattr(head_weight, 'ndim', 0) >= 4:
         channels[-1] = int(head_weight.shape[1])

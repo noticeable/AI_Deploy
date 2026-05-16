@@ -184,6 +184,16 @@ def summarize_sparsity(model):
 
 
 def extract_tiny_yolo_channels(model):
+    def extract_stage_out_channels(stage):
+        if isinstance(stage, ConvBNAct):
+            return int(stage.block[0].out_channels)
+        blocks = getattr(stage, 'blocks', None)
+        if blocks is not None and len(blocks) > 0:
+            first_block = blocks[0]
+            if hasattr(first_block, 'block') and len(first_block.block) > 0 and hasattr(first_block.block[0], 'out_channels'):
+                return int(first_block.block[0].out_channels)
+        return None
+
     stages = [
         getattr(model, 'stem', None),
         getattr(model, 'stage2', None),
@@ -192,8 +202,9 @@ def extract_tiny_yolo_channels(model):
     ]
     channels = []
     for stage in stages:
-        if isinstance(stage, ConvBNAct):
-            channels.append(int(stage.block[0].out_channels))
+        out_channels = extract_stage_out_channels(stage)
+        if out_channels is not None:
+            channels.append(out_channels)
     return channels
 
 
