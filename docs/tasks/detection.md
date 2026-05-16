@@ -40,7 +40,8 @@ python scripts/detection/infer.py --config configs/detection/yolo/yolov8_n.yaml 
 
 说明：
 - Soft-NMS 当前已接到 YOLO / QAT YOLO 的推理输出后处理路径
-- 当前 TinyYOLO 默认每张图候选数很少，因此 Soft-NMS 多数情况下是保守 no-op，但接口已预留给后续更 dense 的 head
+- 当前默认 TinyYOLO 已使用 dense candidate head，Soft-NMS 会在真实候选集合上生效
+- 推理 / 评估仍保持稳定的最终框输出，同时额外保留 dense 候选列表用于可视化与排查
 - ONNX 导出当前不支持 `eval.nms_type=soft`，导出前请切回 `hard`
 
 `model.yolo.block` 当前支持以下可选轻量 backbone block：
@@ -172,10 +173,11 @@ python scripts/detection/infer.py --config configs/detection/detr/detr_r50.yaml 
 
 ```bash
 python scripts/detection/export.py --config configs/detection/yolo/yolov8_n.yaml \
+    eval.nms_type hard \
     export.output_file outputs/yolov8_n.onnx
 ```
 
-若 `export.checkpoint` 指向 pruned detection checkpoint，导出入口会先按 checkpoint 中保存的结构自动重建模型，再加载权重导出。
+若 `test.checkpoint` / `export.checkpoint` 指向 detection checkpoint，评估、推理、导出入口会优先按 checkpoint 中保存的结构自动重建模型，再加载权重。对于 YOLO-family checkpoint，这样可以恢复真实的 dense multi-head 结构与类别信息。
 
 ## 剪枝与蒸馏
 
@@ -246,6 +248,7 @@ python tools/smoke_test_prune_distill_detection_pagcp.py
 当前以下入口都支持这种自动重建：
 - `scripts/detection/train.py`
 - `scripts/detection/evaluate.py`
+- `scripts/detection/infer.py`
 - `scripts/detection/export.py`
 - `pytorch_object_detection.utils.checkpoint.create_model_from_checkpoint(...)`
 

@@ -57,16 +57,18 @@ def load_export_model(config, checkpoint_path):
 
 
 def load_float_model_from_qat_checkpoint(config, checkpoint_path):
-    model = create_model(config)
-    model, _ = prepare_model_for_qat(config, model)
-    Checkpointer(model).load(str(checkpoint_path))
-    float_model = create_model(config)
-    float_model.load_state_dict(model.state_dict(), strict=False)
-    return float_model
+    float_model, loaded_config, _ = create_model_from_checkpoint(config, str(checkpoint_path), create_model)
+    qat_model, _ = prepare_model_for_qat(loaded_config, float_model)
+    Checkpointer(qat_model).load(str(checkpoint_path))
+    restored_float_model, _, _ = create_model_from_checkpoint(loaded_config, str(checkpoint_path), create_model)
+    restored_float_model.load_state_dict(qat_model.state_dict(), strict=False)
+    return restored_float_model, loaded_config
 
 
 def main():
     config = load_config()
+    if str(getattr(config.eval, 'nms_type', 'hard')).lower() == 'soft':
+        raise ValueError('scripts/detection/export.py requires eval.nms_type=hard because Soft-NMS is not supported in ONNX export.')
     checkpoint_path = pathlib.Path(config.export.checkpoint) if config.export.checkpoint else None
     if checkpoint_path is not None and not checkpoint_path.exists():
         raise FileNotFoundError(
@@ -83,14 +85,14 @@ def main():
     if quantized_onnx:
         if checkpoint_path is None:
             raise ValueError('export.quantized_onnx=True requires export.checkpoint to be set.')
-        float_model = load_float_model_from_qat_checkpoint(config, checkpoint_path)
-        output_file = config.export.output_file or 'detection_model.onnx'
+        float_model, export_config = load_float_model_from_qat_checkpoint(config, checkpoint_path)
+        output_file = export_config.export.output_file or 'detection_model.onnx'
         output_path = pathlib.Path(output_file)
         float_output_path = make_float_onnx_path(output_path)
-        config.defrost()
-        config.export.output_file = float_output_path.as_posix()
-        config.freeze()
-        exporter = create_exporter(config)
+        export_config.defrost()
+        export_config.export.output_file = float_output_path.as_posix()
+        export_config.freeze()
+        exporter = create_exporter(export_config)
         exporter.export(float_model)
         quantize_onnx_model(float_output_path,
                             output_path,

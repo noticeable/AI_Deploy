@@ -162,6 +162,96 @@ class DSConvBNAct(nn.Module):
         return self.pointwise(self.depthwise(x))
 
 
+class YOLOStage(nn.Module):
+    def __init__(self, block_name, kernel_size, in_channels, out_channels, stride, num_blocks=1):
+        super().__init__()
+        layers = [create_yolo_block(block_name, in_channels, out_channels, kernel_size, stride)]
+        for _ in range(max(int(num_blocks), 1) - 1):
+            layers.append(create_yolo_block(block_name, out_channels, out_channels, kernel_size, 1))
+        self.blocks = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.blocks(x)
+
+
+class YOLOUpsampleMerge(nn.Module):
+    def __init__(self, block_name, kernel_size, low_res_channels, skip_channels, out_channels):
+        super().__init__()
+        self.low_proj = ConvBNAct(low_res_channels, out_channels, 1, 1)
+        self.skip_proj = ConvBNAct(skip_channels, out_channels, 1, 1)
+        self.fuse = YOLOStage(block_name, kernel_size, out_channels * 2, out_channels, 3, num_blocks=2)
+
+    def forward(self, low_res, skip):
+        low_res = self.low_proj(low_res)
+        low_res = F.interpolate(low_res, size=skip.shape[-2:], mode='nearest')
+        skip = self.skip_proj(skip)
+        return self.fuse(torch.cat((low_res, skip), dim=1))
+
+
+class YOLODownsampleMerge(nn.Module):
+    def __init__(self, block_name, kernel_size, high_res_channels, skip_channels, out_channels):
+        super().__init__()
+        self.down = create_yolo_block(block_name, high_res_channels, out_channels, kernel_size, 2)
+        self.skip_proj = ConvBNAct(skip_channels, out_channels, 1, 1)
+        self.fuse = YOLOStage(block_name, kernel_size, out_channels * 2, out_channels, 3, num_blocks=2)
+
+    def forward(self, high_res, skip):
+        high_res = self.down(high_res)
+        skip = self.skip_proj(skip)
+        return self.fuse(torch.cat((high_res, skip), dim=1))
+
+
+class YOLODetectionHead(nn.Module):
+    def __init__(self, in_channels, hidden_channels, n_classes, per_cell_boxes, use_objectness):
+        super().__init__()
+        hidden_channels = max(int(hidden_channels), int(in_channels))
+        self.stem = nn.Sequential(
+            ConvBNAct(in_channels, hidden_channels, 3, 1),
+            ConvBNAct(hidden_channels, hidden_channels, 3, 1),
+        )
+        self.box_head = nn.Conv2d(hidden_channels, per_cell_boxes * 4, kernel_size=1)
+        self.score_head = nn.Conv2d(hidden_channels, per_cell_boxes * (n_classes + 1), kernel_size=1)
+        self.objectness_head = nn.Conv2d(hidden_channels, per_cell_boxes, kernel_size=1) if use_objectness else None
+
+    def forward(self, x):
+        x = self.stem(x)
+        pred_boxes = torch.sigmoid(self.box_head(x))
+        pred_logits = self.score_head(x)
+        if self.objectness_head is not None:
+            objectness = torch.sigmoid(self.objectness_head(x))
+        else:
+            objectness = None
+        return pred_boxes, pred_logits, objectness
+
+
+class TinyYOLOFPNMultiHead(nn.Module):
+    def __init__(self, block_name, kernel_size, channels, head_channels, n_classes, per_cell_boxes, use_objectness):
+        super().__init__()
+        c3, c4, c5 = channels
+        self.p5_reduce = ConvBNAct(c5, head_channels, 1, 1)
+        self.p4_fuse = YOLOUpsampleMerge(block_name, kernel_size, head_channels, c4, head_channels)
+        self.p3_fuse = YOLOUpsampleMerge(block_name, kernel_size, head_channels, c3, head_channels)
+        self.n4_fuse = YOLODownsampleMerge(block_name, kernel_size, head_channels, head_channels, head_channels)
+        self.n5_fuse = YOLODownsampleMerge(block_name, kernel_size, head_channels, head_channels, head_channels)
+        self.heads = nn.ModuleList([
+            YOLODetectionHead(head_channels, head_channels, n_classes, per_cell_boxes, use_objectness),
+            YOLODetectionHead(head_channels, head_channels, n_classes, per_cell_boxes, use_objectness),
+            YOLODetectionHead(head_channels, head_channels, n_classes, per_cell_boxes, use_objectness),
+        ])
+
+    def forward(self, features):
+        c3, c4, c5 = features
+        p5 = self.p5_reduce(c5)
+        p4 = self.p4_fuse(p5, c4)
+        p3 = self.p3_fuse(p4, c3)
+        n4 = self.n4_fuse(p3, p4)
+        n5 = self.n5_fuse(n4, p5)
+        outputs = []
+        for feature, head in zip((p3, n4, n5), self.heads):
+            outputs.append(head(feature))
+        return outputs
+
+
 def create_yolo_block(block_name, in_channels, out_channels, kernel_size, stride):
     block_name = str(block_name).lower()
     if block_name == 'conv':
@@ -192,67 +282,121 @@ class TinyYOLO(nn.Module):
         self.config = config
         self.n_classes = config.dataset.n_classes
         self.assigner = create_assigner(config, 'yolo')
+        self.channels = channels
         block_name = getattr(config.model.yolo, 'block', 'conv')
         kernel_size = getattr(config.model.yolo, 'block_kernel_size', 3)
-        self.backbone = nn.Sequential(
-            create_yolo_block(block_name, config.dataset.n_channels, channels[0], kernel_size, 2),
-            create_yolo_block(block_name, channels[0], channels[1], kernel_size, 2),
-            create_yolo_block(block_name, channels[1], channels[2], kernel_size, 2),
-            create_yolo_block(block_name, channels[2], channels[3], kernel_size, 2),
-        )
+        stage_blocks = max(1, int(round(getattr(config.model.yolo, 'depth_mult', 1.0) * 3)))
+        self.stem = create_yolo_block(block_name, config.dataset.n_channels, channels[0], kernel_size, 2)
+        self.stage2 = YOLOStage(block_name, kernel_size, channels[0], channels[1], 2, num_blocks=stage_blocks)
+        self.stage3 = YOLOStage(block_name, kernel_size, channels[1], channels[2], 2, num_blocks=stage_blocks)
+        self.stage4 = YOLOStage(block_name, kernel_size, channels[2], channels[3], 2, num_blocks=stage_blocks)
         dense_head_cfg = getattr(config.model.yolo, 'dense_head', None)
         dense_enabled = bool(getattr(dense_head_cfg, 'enabled', False))
-        grid_size = int(getattr(dense_head_cfg, 'grid_size', 7)) if dense_enabled else 1
-        per_cell_boxes = int(getattr(dense_head_cfg, 'per_cell_boxes', 1)) if dense_enabled else 1
-        self.grid_size = max(grid_size, 1)
+        dense_head_type = str(getattr(dense_head_cfg, 'type', 'fpn_multi')).lower()
+        if not dense_enabled:
+            raise ValueError('TinyYOLO now requires config.model.yolo.dense_head.enabled=True for multi-scale detection')
+        if dense_head_type != 'fpn_multi':
+            raise ValueError(f'TinyYOLO only supports dense head type "fpn_multi", got {dense_head_type}')
+        per_cell_boxes = int(getattr(dense_head_cfg, 'per_cell_boxes', 1))
         self.per_cell_boxes = max(per_cell_boxes, 1)
-        configured_candidates = int(getattr(config.model.yolo, 'num_candidates', self.grid_size * self.grid_size * self.per_cell_boxes))
-        self.num_candidates = max(1, configured_candidates)
         self.min_box_size = float(getattr(config.model.yolo, 'min_box_size', 0.02))
         self.use_objectness = bool(getattr(dense_head_cfg, 'use_objectness', True))
-        self.pool = nn.AdaptiveAvgPool2d((self.grid_size, self.grid_size))
-        head_channels = channels[-1]
-        self.box_head = nn.Conv2d(head_channels, self.per_cell_boxes * 4, kernel_size=1)
-        self.score_head = nn.Conv2d(head_channels,
-                                    self.per_cell_boxes * (config.dataset.n_classes + 1),
-                                    kernel_size=1)
-        self.objectness_head = nn.Conv2d(head_channels, self.per_cell_boxes, kernel_size=1) if self.use_objectness else None
+        head_channels = int(getattr(dense_head_cfg, 'neck_channels', channels[2]))
+        self.strides = list(getattr(config.model.yolo, 'strides', [8, 16, 32]))
+        if len(self.strides) != 3:
+            raise ValueError(f'config.model.yolo.strides must contain 3 entries, got {self.strides}')
+        self.neck = TinyYOLOFPNMultiHead(block_name,
+                                         kernel_size,
+                                         channels[1:],
+                                         head_channels,
+                                         self.n_classes,
+                                         self.per_cell_boxes,
+                                         self.use_objectness)
+        self.grid_sizes = []
+        default_candidates = sum(self.per_cell_boxes * max(config.dataset.image_size // int(stride), 1) ** 2
+                                 for stride in self.strides)
+        configured_candidates = int(getattr(config.model.yolo, 'num_candidates', default_candidates))
+        self.num_candidates = max(1, configured_candidates)
+        self.pool = None
+        self.pool_kernel_size = None
+        self.dense_neck = self.neck
+        self.box_head = self.neck.heads[-1].box_head
+        self.score_head = self.neck.heads[-1].score_head
+        self.objectness_head = self.neck.heads[-1].objectness_head
 
-    def _reshape_dense_predictions(self, feature_map):
-        batch_size = feature_map.shape[0]
-        pred_boxes = torch.sigmoid(self.box_head(feature_map))
-        pred_boxes = pred_boxes.view(batch_size, self.per_cell_boxes, 4, self.grid_size, self.grid_size)
+    def _forward_backbone(self, images):
+        x1 = self.stem(images)
+        x2 = self.stage2(x1)
+        x3 = self.stage3(x2)
+        x4 = self.stage4(x3)
+        return x2, x3, x4
+
+    def _reshape_prediction_map(self, pred_boxes, pred_logits, objectness, grid_h, grid_w):
+        batch_size = pred_boxes.shape[0]
+        pred_boxes = pred_boxes.view(batch_size, self.per_cell_boxes, 4, grid_h, grid_w)
         pred_boxes = pred_boxes.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, 4)
-
-        pred_logits = self.score_head(feature_map)
         pred_logits = pred_logits.view(batch_size,
                                        self.per_cell_boxes,
                                        self.n_classes + 1,
-                                       self.grid_size,
-                                       self.grid_size)
+                                       grid_h,
+                                       grid_w)
         pred_logits = pred_logits.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, self.n_classes + 1)
-
-        if self.objectness_head is not None:
-            objectness = torch.sigmoid(self.objectness_head(feature_map))
-            objectness = objectness.view(batch_size, self.per_cell_boxes, 1, self.grid_size, self.grid_size)
+        if objectness is not None:
+            objectness = objectness.view(batch_size, self.per_cell_boxes, 1, grid_h, grid_w)
             objectness = objectness.permute(0, 3, 4, 1, 2).reshape(batch_size, -1)
         else:
             objectness = pred_logits.new_ones((batch_size, pred_logits.shape[1]))
         return pred_boxes, pred_logits, objectness
 
-    def _decode_dense_boxes(self, pred_boxes):
+    def _reshape_dense_predictions(self, prediction_maps):
+        all_boxes = []
+        all_logits = []
+        all_objectness = []
+        self.grid_sizes = []
+        for pred_boxes, pred_logits, objectness in prediction_maps:
+            grid_h = int(pred_boxes.shape[-2])
+            grid_w = int(pred_boxes.shape[-1])
+            self.grid_sizes.append((grid_h, grid_w))
+            reshaped_boxes, reshaped_logits, reshaped_objectness = self._reshape_prediction_map(
+                pred_boxes,
+                pred_logits,
+                objectness,
+                grid_h,
+                grid_w,
+            )
+            all_boxes.append(reshaped_boxes)
+            all_logits.append(reshaped_logits)
+            all_objectness.append(reshaped_objectness)
+        return torch.cat(all_boxes, dim=1), torch.cat(all_logits, dim=1), torch.cat(all_objectness, dim=1)
+
+    def _decode_level_boxes(self, pred_boxes, grid_h, grid_w, stride):
         device = pred_boxes.device
         dtype = pred_boxes.dtype
-        grid = torch.arange(self.grid_size, device=device, dtype=dtype)
-        yy, xx = torch.meshgrid(grid, grid, indexing='ij')
-        centers = torch.stack((xx, yy), dim=-1).reshape(1, self.grid_size * self.grid_size, 1, 2)
+        grid_y = torch.arange(grid_h, device=device, dtype=dtype)
+        grid_x = torch.arange(grid_w, device=device, dtype=dtype)
+        yy, xx = torch.meshgrid(grid_y, grid_x, indexing='ij')
+        centers = torch.stack((xx, yy), dim=-1).reshape(1, grid_h * grid_w, 1, 2)
         centers = centers.repeat(pred_boxes.shape[0], 1, self.per_cell_boxes, 1).reshape(pred_boxes.shape[0], -1, 2)
-        stride = 1.0 / float(self.grid_size)
-        center_xy = (centers + pred_boxes[..., :2]) * stride
-        wh = torch.clamp(pred_boxes[..., 2:], min=self.min_box_size) * stride
+        stride_x = 1.0 / float(grid_w)
+        stride_y = 1.0 / float(grid_h)
+        center_x = (centers[..., 0:1] + pred_boxes[..., 0:1]) * stride_x
+        center_y = (centers[..., 1:2] + pred_boxes[..., 1:2]) * stride_y
+        center_xy = torch.cat((center_x, center_y), dim=-1)
+        stride_scale = max(float(stride), 1.0) / max(float(self.config.dataset.image_size), 1.0)
+        wh = torch.clamp(pred_boxes[..., 2:], min=self.min_box_size) * stride_scale
         top_left = torch.clamp(center_xy - 0.5 * wh, min=0.0, max=1.0)
         bottom_right = torch.clamp(center_xy + 0.5 * wh, min=0.0, max=1.0)
-        decoded = torch.cat([top_left, torch.maximum(top_left + 1e-4, bottom_right)], dim=-1)
+        return torch.cat([top_left, torch.maximum(top_left + 1e-4, bottom_right)], dim=-1)
+
+    def _decode_dense_boxes(self, pred_boxes):
+        decoded_levels = []
+        start = 0
+        for (grid_h, grid_w), stride in zip(self.grid_sizes, self.strides):
+            num_locations = grid_h * grid_w * self.per_cell_boxes
+            level_boxes = pred_boxes[:, start:start + num_locations]
+            decoded_levels.append(self._decode_level_boxes(level_boxes, grid_h, grid_w, stride))
+            start += num_locations
+        decoded = torch.cat(decoded_levels, dim=1)
         if decoded.shape[1] > self.num_candidates:
             decoded = decoded[:, :self.num_candidates]
         return decoded
@@ -299,9 +443,9 @@ class TinyYOLO(nn.Module):
         return detections
 
     def forward(self, images, targets=None, return_outputs=False):
-        x = self.backbone(images)
-        x = self.pool(x)
-        raw_pred_boxes, pred_logits, objectness = self._reshape_dense_predictions(x)
+        features = self._forward_backbone(images)
+        prediction_maps = self.neck(features)
+        raw_pred_boxes, pred_logits, objectness = self._reshape_dense_predictions(prediction_maps)
         pred_boxes = self._decode_dense_boxes(raw_pred_boxes)
         if pred_logits.shape[1] > self.num_candidates:
             pred_logits = pred_logits[:, :self.num_candidates]
@@ -337,7 +481,7 @@ class TinyYOLO(nn.Module):
                 'loss_box': loss_box / batch_size,
                 'loss_cls': loss_cls / batch_size,
             }
-            if self.objectness_head is not None:
+            if self.use_objectness:
                 losses['loss_obj'] = objectness.mean() * 0.0
             if return_outputs:
                 return {

@@ -53,6 +53,7 @@ def main():
             'dataset.dataset_dir', str(tmp),
             'dataset.train_ann', '',
             'dataset.val_ann', '',
+            'model.yolo.dense_head.type', 'fpn_multi',
             'qat.enabled', 'True',
             'qat.freeze_bn_epoch', '1',
             'qat.disable_observer_epoch', '1',
@@ -83,6 +84,7 @@ def main():
             'export.output_file', str(onnx_path),
             'export.quantized_onnx', 'True',
             'export.quantized_onnx_backend', 'onnxruntime_dynamic',
+            'model.yolo.dense_head.type', 'fpn_multi',
             'qat.enabled', 'True',
         ]
         export_result = run_command(export_command)

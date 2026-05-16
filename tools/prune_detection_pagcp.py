@@ -18,16 +18,27 @@ except Exception:
 
 
 SUPPORTED_TP_METHODS = {'tp_magnitude', 'structured_ln'}
+SUPPORTED_PRUNE_TARGETS = {'backbone'}
+
+
+def validate_prune_target(target):
+    if target not in SUPPORTED_PRUNE_TARGETS:
+        raise ValueError(
+            'Unsupported detection prune.target: '
+            f'{target}. The full YOLO FPN multi-head migration only supports prune.target=backbone.')
 
 
 def collect_backbone_conv_root_modules(model, enabled_modules):
     root_modules = []
-    backbone = getattr(model, 'backbone', None)
-    if backbone is None:
-        return root_modules
-    for module in backbone.modules():
-        if isinstance(module, nn.Conv2d) and 'conv' in enabled_modules:
-            root_modules.append(module)
+    for module in (getattr(model, 'stem', None),
+                   getattr(model, 'stage2', None),
+                   getattr(model, 'stage3', None),
+                   getattr(model, 'stage4', None)):
+        if module is None:
+            continue
+        for submodule in module.modules():
+            if isinstance(submodule, nn.Conv2d) and 'conv' in enabled_modules:
+                root_modules.append(submodule)
     return root_modules
 
 
@@ -44,6 +55,7 @@ def collect_model_root_modules(model, enabled_modules):
 
 
 def collect_ignored_tp_layers(model, target):
+    validate_prune_target(target)
     ignored_layers = []
     if target == 'backbone':
         if hasattr(model, 'box_head'):
@@ -84,6 +96,7 @@ def collect_parameters(model, enabled_modules):
 
 
 def collect_tp_root_modules(model, enabled_modules, target='backbone'):
+    validate_prune_target(target)
     if target == 'backbone':
         return collect_backbone_conv_root_modules(model, enabled_modules)
     return collect_model_root_modules(model, enabled_modules)
@@ -171,21 +184,24 @@ def summarize_sparsity(model):
 
 
 def extract_tiny_yolo_channels(model):
-    if not hasattr(model, 'backbone') or not isinstance(model.backbone, nn.Sequential):
-        return []
+    stages = [
+        getattr(model, 'stem', None),
+        getattr(model, 'stage2', None),
+        getattr(model, 'stage3', None),
+        getattr(model, 'stage4', None),
+    ]
     channels = []
-    for module in model.backbone:
-        if isinstance(module, ConvBNAct):
-            channels.append(int(module.block[0].out_channels))
+    for stage in stages:
+        if isinstance(stage, ConvBNAct):
+            channels.append(int(stage.block[0].out_channels))
     return channels
 
 
 def save_pruned_checkpoint(model, config, prune_config, checkpoint_path, output_path, rebuilt):
     saved_config = config.as_dict()
+    saved_config.setdefault('model', {}).setdefault('yolo', {}).setdefault('dense_head', {})['type'] = 'fpn_multi'
     if prune_config.backend == 'torch_pruning':
         saved_channels = extract_tiny_yolo_channels(model)
-        if saved_channels and hasattr(model, 'score_head'):
-            saved_channels[-1] = int(model.score_head.in_features)
         saved_config.setdefault('model', {}).setdefault('yolo', {})['channels'] = saved_channels
     checkpoint = {
         'model': model.state_dict(),
@@ -208,61 +224,16 @@ def save_pruned_checkpoint(model, config, prune_config, checkpoint_path, output_
     torch.save(checkpoint, output_path)
 
 
+def _head_in_channels(module):
+    if isinstance(module, nn.Conv2d):
+        return int(module.in_channels)
+    if isinstance(module, nn.Linear):
+        return int(module.in_features)
+    raise TypeError(f'Unsupported detection head type: {type(module).__name__}')
+
+
 def rebuild_tiny_yolo_channels(model):
-    if not hasattr(model, 'backbone') or not isinstance(model.backbone, nn.Sequential):
-        return model, False
-
-    conv_blocks = [module for module in model.backbone if isinstance(module, ConvBNAct)]
-    if len(conv_blocks) != len(model.backbone):
-        return model, False
-
-    original_widths = []
-    inferred_widths = []
-    for block in conv_blocks:
-        conv = block.block[0]
-        original_widths.append(conv.out_channels)
-        keep_mask = conv.weight.detach().abs().sum(dim=(1, 2, 3)) > 0
-        keep_count = int(keep_mask.sum().item())
-        if keep_count <= 0:
-            keep_count = 1
-        inferred_widths.append(keep_count)
-
-    config = model.config
-    rebuilt = type(model)(config)
-    new_blocks = [module for module in rebuilt.backbone if isinstance(module, ConvBNAct)]
-    if len(new_blocks) != len(conv_blocks):
-        return model, False
-
-    for new_block, old_block, out_keep in zip(new_blocks, conv_blocks, inferred_widths):
-        new_conv = new_block.block[0]
-        old_conv = old_block.block[0]
-        if out_keep > new_conv.out_channels:
-            return model, False
-        out_indices = torch.arange(out_keep)
-        in_keep = min(new_conv.in_channels, old_conv.in_channels)
-        in_indices = torch.arange(in_keep)
-        new_conv.weight.data.zero_()
-        new_conv.weight.data[:out_keep, :in_keep] = old_conv.weight.data[out_indices][:, in_indices]
-
-        new_bn = new_block.block[1]
-        old_bn = old_block.block[1]
-        for attr in ('weight', 'bias', 'running_mean', 'running_var'):
-            getattr(new_bn, attr).data.zero_()
-            getattr(new_bn, attr).data[:out_keep] = getattr(old_bn, attr).data[out_indices]
-
-    old_box = model.box_head
-    old_score = model.score_head
-    new_box = rebuilt.box_head
-    new_score = rebuilt.score_head
-    last_keep = min(new_box.in_features, old_box.in_features)
-    in_indices = torch.arange(last_keep)
-    new_box.weight.data.zero_()
-    new_box.weight.data[:, :last_keep] = old_box.weight.data[:, in_indices]
-    new_box.bias.data.copy_(old_box.bias.data)
-    new_score.weight.data.zero_()
-    new_score.weight.data[:, :last_keep] = old_score.weight.data[:, in_indices]
-    new_score.bias.data.copy_(old_score.bias.data)
-    return rebuilt, inferred_widths != original_widths
+    return model, False
 
 
 def main():
@@ -276,6 +247,11 @@ def main():
     checkpoint_path = pathlib.Path(checkpoint_path)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f'Prune checkpoint not found: {checkpoint_path}')
+
+    if prune_config.backend == 'builtin' and prune_config.method == 'structured_ln':
+        raise ValueError(
+            'Detection builtin structured_ln rebuild has not been aligned with the current FPN multi-head YOLO model. '
+            'Use prune.backend=torch_pruning for structured channel pruning, or use builtin global_unstructured sparsification.')
 
     model = create_model(config)
     model.config = config

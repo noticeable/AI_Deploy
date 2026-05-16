@@ -13,12 +13,15 @@ model:
   yolo:
     block: dsconv
 assignment:
-  name: first_box
+  name: dynamic_k
+  dynamic_k_topk: 10
+  cls_cost: 1.0
+  iou_cost: 3.0
   box_loss: iou
   iou_variant: giou
   box_loss_weight: 1.0
   yolo:
-    name: iou
+    name: dynamic_k
 train:
   batch_size: 8
   optimizer: adamw

@@ -1,30 +1,50 @@
 import torch
 
 
+_YOLO_DENSE_HEAD_FIELDS = (
+    'enabled',
+    'type',
+    'per_cell_boxes',
+    'use_objectness',
+    'neck_channels',
+)
+
+
+def _collect_head_weights(model_state, prefix):
+    return {name: weight for name, weight in model_state.items() if name.startswith(prefix)}
+
+
 def _infer_tinyyolo_channels(model_state, fallback_channels):
     channels = list(fallback_channels)
     if not channels:
         return channels
-    box_head_weight = model_state.get('box_head.weight')
-    score_head_weight = model_state.get('score_head.weight')
-    inferred_last_channel = None
-    if box_head_weight is not None and getattr(box_head_weight, 'ndim', 0) >= 4:
-        inferred_last_channel = int(box_head_weight.shape[1])
-    elif score_head_weight is not None and getattr(score_head_weight, 'ndim', 0) >= 4:
-        inferred_last_channel = int(score_head_weight.shape[1])
-    elif box_head_weight is not None and getattr(box_head_weight, 'ndim', 0) >= 2:
-        inferred_last_channel = int(box_head_weight.shape[1])
-    elif score_head_weight is not None and getattr(score_head_weight, 'ndim', 0) >= 2:
-        inferred_last_channel = int(score_head_weight.shape[1])
-    if inferred_last_channel is not None:
-        channels[-1] = inferred_last_channel
+    head_weight = model_state.get('neck.heads.2.box_head.weight')
+    if head_weight is not None and getattr(head_weight, 'ndim', 0) >= 4:
+        channels[-1] = int(head_weight.shape[1])
     return channels
+
+
+def _infer_tinyyolo_neck_channels(model_state, fallback_neck_channels):
+    head_weight = model_state.get('neck.heads.2.box_head.weight')
+    if head_weight is not None and getattr(head_weight, 'ndim', 0) >= 4:
+        return int(head_weight.shape[1])
+    return int(fallback_neck_channels)
 
 
 def _resize_detection_head(module, weight):
     if getattr(weight, 'ndim', 0) == 4:
         return torch.nn.Conv2d(int(weight.shape[1]), int(weight.shape[0]), kernel_size=1)
     return torch.nn.Linear(int(weight.shape[1]), int(weight.shape[0]))
+
+
+def _maybe_resize_head_module(model, module_name, weight):
+    module = getattr(model, module_name, None)
+    if module is None or weight is None:
+        return
+    current_shape = tuple(module.weight.shape)
+    target_shape = tuple(weight.shape)
+    if current_shape != target_shape:
+        setattr(model, module_name, _resize_detection_head(module, weight))
 
 
 def load_checkpoint_and_update_config(config, checkpoint_path):
@@ -54,19 +74,21 @@ def load_checkpoint_and_update_config(config, checkpoint_path):
     if yolo_config.get('min_box_size') is not None:
         updated_config.model.yolo.min_box_size = yolo_config['min_box_size']
     dense_head_config = yolo_config.get('dense_head', {})
-    if dense_head_config.get('enabled') is not None:
-        updated_config.model.yolo.dense_head.enabled = dense_head_config['enabled']
-    if dense_head_config.get('grid_size') is not None:
-        updated_config.model.yolo.dense_head.grid_size = dense_head_config['grid_size']
-    if dense_head_config.get('per_cell_boxes') is not None:
-        updated_config.model.yolo.dense_head.per_cell_boxes = dense_head_config['per_cell_boxes']
-    if dense_head_config.get('use_objectness') is not None:
-        updated_config.model.yolo.dense_head.use_objectness = dense_head_config['use_objectness']
+    for field_name in _YOLO_DENSE_HEAD_FIELDS:
+        if dense_head_config.get(field_name) is not None:
+            setattr(updated_config.model.yolo.dense_head,
+                    field_name,
+                    dense_head_config[field_name])
+    updated_config.model.yolo.dense_head.type = 'fpn_multi'
     channels = yolo_config.get('channels', [])
     if channels:
         updated_config.model.yolo.channels = _infer_tinyyolo_channels(model_state, channels)
     elif yolo_config.get('width_mult') is not None:
         updated_config.model.yolo.width_mult = yolo_config['width_mult']
+    updated_config.model.yolo.dense_head.neck_channels = _infer_tinyyolo_neck_channels(
+        model_state,
+        getattr(updated_config.model.yolo.dense_head, 'neck_channels', 128),
+    )
 
     updated_config.freeze()
     return checkpoint, updated_config
@@ -76,24 +98,34 @@ def create_model_from_checkpoint(config, checkpoint_path, create_model_fn):
     checkpoint, updated_config = load_checkpoint_and_update_config(config, checkpoint_path)
     model = create_model_fn(updated_config)
     model_state = checkpoint.get('model', checkpoint)
-    box_head_weight = model_state.get('box_head.weight')
-    score_head_weight = model_state.get('score_head.weight')
-    if hasattr(model, 'box_head') and box_head_weight is not None:
-        current_shape = tuple(model.box_head.weight.shape)
-        target_shape = tuple(box_head_weight.shape)
-        if current_shape != target_shape:
-            model.box_head = _resize_detection_head(model.box_head, box_head_weight)
-    if hasattr(model, 'score_head') and score_head_weight is not None:
-        current_shape = tuple(model.score_head.weight.shape)
-        target_shape = tuple(score_head_weight.shape)
-        if current_shape != target_shape:
-            model.score_head = _resize_detection_head(model.score_head, score_head_weight)
-    objectness_head_weight = model_state.get('objectness_head.weight')
-    if hasattr(model, 'objectness_head') and model.objectness_head is not None and objectness_head_weight is not None:
-        current_shape = tuple(model.objectness_head.weight.shape)
-        target_shape = tuple(objectness_head_weight.shape)
-        if current_shape != target_shape:
-            model.objectness_head = _resize_detection_head(model.objectness_head, objectness_head_weight)
+    _maybe_resize_head_module(model, 'box_head', model_state.get('box_head.weight'))
+    _maybe_resize_head_module(model, 'score_head', model_state.get('score_head.weight'))
+    _maybe_resize_head_module(model, 'objectness_head', model_state.get('objectness_head.weight'))
+
+    head_prefixes = [
+        'neck.heads.0.box_head',
+        'neck.heads.0.score_head',
+        'neck.heads.0.objectness_head',
+        'neck.heads.1.box_head',
+        'neck.heads.1.score_head',
+        'neck.heads.1.objectness_head',
+        'neck.heads.2.box_head',
+        'neck.heads.2.score_head',
+        'neck.heads.2.objectness_head',
+    ]
+    for prefix in head_prefixes:
+        weight = model_state.get(f'{prefix}.weight')
+        if weight is None:
+            continue
+        module = model
+        parts = prefix.split('.')
+        for part in parts[:-1]:
+            module = module[int(part)] if part.isdigit() else getattr(module, part)
+        last_name = parts[-1]
+        head_module = getattr(module, last_name)
+        if head_module is not None and tuple(head_module.weight.shape) != tuple(weight.shape):
+            setattr(module, last_name, _resize_detection_head(head_module, weight))
+
     if hasattr(model, 'config'):
         model.config = updated_config
     model.load_state_dict(model_state, strict=False)

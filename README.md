@@ -130,9 +130,12 @@ python scripts/detection/train.py --config configs/detection/yolo/yolov8_n.yaml
 
 当前默认 YOLO 检测路径已切到 dense candidate head：
 - 默认不再走 `first_box`
+- 默认使用完整的 `dense_head.type=fpn_multi` 多头路径
 - 默认使用 `assignment.yolo.name=dynamic_k`
 - 默认 `eval.nms_type=soft`，Soft-NMS 现在会在真实候选集合上生效
-- 若需要导出 ONNX，请显式覆盖为 `eval.nms_type hard`
+- 推理 / 评估产物会继续输出稳定的最终框集合，同时额外保留 dense 候选列表用于可视化与排查
+- 若需要导出 ONNX，请显式覆盖为 `eval.nms_type hard`；当前导出张量会按 `eval.max_detections` 固定补齐，避免把候选数量波动暴露给下游
+- checkpoint restore 与 checkpoint-aware evaluate / infer / export 会按完整 multi-head 配置回灌，不再假设 tiny-head 简化结构
 
 评估 YOLO：
 
@@ -162,6 +165,6 @@ python scripts/detection/export.py --config configs/detection/yolo/yolov8_n.yaml
     export.output_file outputs/yolov8_n.onnx
 ```
 
-若 `export.checkpoint` 指向 pruned detection checkpoint，导出入口会先按 checkpoint 中保存的结构自动重建模型，再加载权重导出。
+若 `test.checkpoint` / `export.checkpoint` 指向 detection checkpoint，评估、推理、导出入口会优先按 checkpoint 中保存的结构自动重建模型，再加载权重。对于 YOLO-family checkpoint，这样可以恢复真实的 dense multi-head 结构与类别信息。
 
 ## 剪枝与蒸馏

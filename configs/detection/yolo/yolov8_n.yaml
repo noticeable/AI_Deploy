@@ -12,12 +12,15 @@ model:
   name: yolov8_n
   yolo:
     block: conv
-    num_candidates: 84
+    strides: [8, 16, 32]
+    min_box_size: 0.02
+    num_candidates: 16800
     dense_head:
       enabled: True
-      grid_size: 7
+      type: fpn_multi
       per_cell_boxes: 2
       use_objectness: True
+      neck_channels: 128
 assignment:
   name: dynamic_k
   box_loss: l1

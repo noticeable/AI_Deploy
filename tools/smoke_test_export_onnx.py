@@ -43,6 +43,8 @@ TESTS = [
             'scripts/detection/export.py',
             '--config',
             'configs/detection/yolo/yolov8_n.yaml',
+            'eval.nms_type',
+            'hard',
             'export.output_file',
             '',
         ],

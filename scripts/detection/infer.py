@@ -6,9 +6,9 @@ import pathlib
 import numpy as np
 import torch
 from PIL import Image
-from fvcore.common.checkpoint import Checkpointer
 
 from pytorch_object_detection import apply_data_parallel_wrapper, create_model, get_default_config, update_config
+from pytorch_object_detection.utils.checkpoint import create_model_from_checkpoint
 from pytorch_object_detection.utils.visualize import draw_detections
 
 
@@ -30,10 +30,11 @@ def load_config():
 
 def main():
     config, input_path, output_path = load_config()
-    model = create_model(config)
-    model = apply_data_parallel_wrapper(config, model)
     if config.test.checkpoint:
-        Checkpointer(model).load(config.test.checkpoint)
+        model, config, _ = create_model_from_checkpoint(config, config.test.checkpoint, create_model)
+    else:
+        model = create_model(config)
+    model = apply_data_parallel_wrapper(config, model)
     model.eval()
 
     image = Image.open(input_path).convert('RGB').resize((config.dataset.image_size, config.dataset.image_size))

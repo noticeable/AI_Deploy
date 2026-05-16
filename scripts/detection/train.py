@@ -71,12 +71,24 @@ def compute_distill_losses(student_outputs, teacher_outputs, distill_config):
 
     student_logits = student_outputs['pred_logits']
     teacher_logits = teacher_outputs['pred_logits']
+    student_boxes = student_outputs['pred_boxes']
+    teacher_boxes = teacher_outputs['pred_boxes']
+    if student_logits.shape != teacher_logits.shape:
+        raise ValueError(
+            'Distillation requires teacher and student logits to have identical shapes. '
+            f'Got student {tuple(student_logits.shape)} and teacher {tuple(teacher_logits.shape)}. '
+            'Use checkpoints/configs with matching dense-head layouts for distillation.')
+    if student_boxes.shape != teacher_boxes.shape:
+        raise ValueError(
+            'Distillation requires teacher and student box tensors to have identical shapes. '
+            f'Got student {tuple(student_boxes.shape)} and teacher {tuple(teacher_boxes.shape)}. '
+            'Use checkpoints/configs with matching dense-head layouts for distillation.')
     kd_cls = F.kl_div(
         F.log_softmax(student_logits / temperature, dim=-1),
         F.softmax(teacher_logits / temperature, dim=-1),
         reduction='batchmean',
     ) * (temperature ** 2)
-    kd_box = F.smooth_l1_loss(student_outputs['pred_boxes'], teacher_outputs['pred_boxes'])
+    kd_box = F.smooth_l1_loss(student_boxes, teacher_boxes)
     return kd_cls, kd_box
 
 

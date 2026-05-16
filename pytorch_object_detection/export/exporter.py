@@ -5,29 +5,24 @@ import torch.nn as nn
 
 
 class DetectionExportWrapper(nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, max_detections):
         super().__init__()
         self.model = model
+        self.max_detections = max(int(max_detections), 1)
 
     def forward(self, images):
         detections = self.model(images)
         batch_detections = []
-        max_detections = 0
         for detection in detections:
-            boxes = detection['boxes']
-            scores = detection['scores'].to(boxes.dtype).unsqueeze(-1)
-            labels = detection['labels'].to(boxes.dtype).unsqueeze(-1)
+            boxes = detection['boxes'][:self.max_detections]
+            scores = detection['scores'][:self.max_detections].to(boxes.dtype).unsqueeze(-1)
+            labels = detection['labels'][:self.max_detections].to(boxes.dtype).unsqueeze(-1)
             packed = torch.cat([boxes, scores, labels], dim=-1)
-            batch_detections.append(packed)
-            max_detections = max(max_detections, packed.size(0))
-
-        padded_detections = []
-        for packed in batch_detections:
-            if packed.size(0) < max_detections:
-                padding = packed.new_zeros((max_detections - packed.size(0), packed.size(1)))
+            if packed.size(0) < self.max_detections:
+                padding = packed.new_zeros((self.max_detections - packed.size(0), packed.size(1)))
                 packed = torch.cat([packed, padding], dim=0)
-            padded_detections.append(packed)
-        return torch.stack(padded_detections, dim=0)
+            batch_detections.append(packed)
+        return torch.stack(batch_detections, dim=0)
 
 
 class DetectionExporter:
@@ -41,7 +36,7 @@ class DetectionExporter:
         output_path = pathlib.Path(output_file)
         output_path.parent.mkdir(exist_ok=True, parents=True)
         model.eval()
-        export_model = DetectionExportWrapper(model)
+        export_model = DetectionExportWrapper(model, self.config.eval.max_detections)
         dummy = torch.randn(1,
                             self.config.dataset.n_channels,
                             self.config.dataset.image_size,
@@ -51,7 +46,7 @@ class DetectionExporter:
         if self.config.export.dynamic_axes:
             dynamic_axes = {
                 'images': {0: 'batch_size'},
-                'detections': {0: 'batch_size', 1: 'num_detections'},
+                'detections': {0: 'batch_size'},
             }
         torch.onnx.export(export_model,
                           dummy,

@@ -71,6 +71,7 @@ def main():
                     'prune.backend', 'torch_pruning',
                     'prune.method', 'tp_magnitude',
                     'prune.target', 'backbone',
+                    'prune.target', 'backbone',
                     'prune.amount', '0.2',
                     'prune.save_name', 'model_tp_pruned.pth',
                     'prune.example_batch_size', '1',
@@ -149,7 +150,7 @@ def main():
                 print(result.stdout)
                 sys.exit(1)
             print(result.stdout.strip())
-        print('SUMMARY | ok=2 | skip=0 | fail=0 | total=2')
+        print('SUMMARY | ok=3 | skip=0 | fail=0 | total=3')
 
 
 if __name__ == '__main__':
