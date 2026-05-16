@@ -200,81 +200,113 @@ class TinyYOLO(nn.Module):
             create_yolo_block(block_name, channels[1], channels[2], kernel_size, 2),
             create_yolo_block(block_name, channels[2], channels[3], kernel_size, 2),
         )
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.box_head = nn.Linear(channels[-1], 4)
-        self.score_head = nn.Linear(channels[-1], config.dataset.n_classes + 1)
+        dense_head_cfg = getattr(config.model.yolo, 'dense_head', None)
+        dense_enabled = bool(getattr(dense_head_cfg, 'enabled', False))
+        grid_size = int(getattr(dense_head_cfg, 'grid_size', 7)) if dense_enabled else 1
+        per_cell_boxes = int(getattr(dense_head_cfg, 'per_cell_boxes', 1)) if dense_enabled else 1
+        self.grid_size = max(grid_size, 1)
+        self.per_cell_boxes = max(per_cell_boxes, 1)
+        configured_candidates = int(getattr(config.model.yolo, 'num_candidates', self.grid_size * self.grid_size * self.per_cell_boxes))
+        self.num_candidates = max(1, configured_candidates)
+        self.min_box_size = float(getattr(config.model.yolo, 'min_box_size', 0.02))
+        self.use_objectness = bool(getattr(dense_head_cfg, 'use_objectness', True))
+        self.pool = nn.AdaptiveAvgPool2d((self.grid_size, self.grid_size))
+        head_channels = channels[-1]
+        self.box_head = nn.Conv2d(head_channels, self.per_cell_boxes * 4, kernel_size=1)
+        self.score_head = nn.Conv2d(head_channels,
+                                    self.per_cell_boxes * (config.dataset.n_classes + 1),
+                                    kernel_size=1)
+        self.objectness_head = nn.Conv2d(head_channels, self.per_cell_boxes, kernel_size=1) if self.use_objectness else None
 
-    def _sync_heads_with_backbone(self):
-        last_block = self.backbone[-1]
-        if hasattr(last_block, 'block'):
-            last_channels = last_block.block[0].out_channels
-        elif hasattr(last_block, 'primary_conv'):
-            last_channels = last_block.primary_conv.block[0].out_channels * 2
-        elif hasattr(last_block, 'project'):
-            last_channels = last_block.project.block[0].out_channels
-        elif hasattr(last_block, 'pointwise'):
-            last_channels = last_block.pointwise.block[0].out_channels
+    def _reshape_dense_predictions(self, feature_map):
+        batch_size = feature_map.shape[0]
+        pred_boxes = torch.sigmoid(self.box_head(feature_map))
+        pred_boxes = pred_boxes.view(batch_size, self.per_cell_boxes, 4, self.grid_size, self.grid_size)
+        pred_boxes = pred_boxes.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, 4)
+
+        pred_logits = self.score_head(feature_map)
+        pred_logits = pred_logits.view(batch_size,
+                                       self.per_cell_boxes,
+                                       self.n_classes + 1,
+                                       self.grid_size,
+                                       self.grid_size)
+        pred_logits = pred_logits.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, self.n_classes + 1)
+
+        if self.objectness_head is not None:
+            objectness = torch.sigmoid(self.objectness_head(feature_map))
+            objectness = objectness.view(batch_size, self.per_cell_boxes, 1, self.grid_size, self.grid_size)
+            objectness = objectness.permute(0, 3, 4, 1, 2).reshape(batch_size, -1)
         else:
-            raise ValueError('Unable to infer TinyYOLO backbone output channels.')
-        if self.box_head.in_features == last_channels and self.score_head.in_features == last_channels:
-            return
-        box_head = nn.Linear(last_channels, self.box_head.out_features)
-        score_head = nn.Linear(last_channels, self.score_head.out_features)
-        box_in = min(last_channels, self.box_head.in_features)
-        score_in = min(last_channels, self.score_head.in_features)
-        with torch.no_grad():
-            box_head.weight.zero_()
-            box_head.weight[:, :box_in] = self.box_head.weight[:, :box_in]
-            box_head.bias.copy_(self.box_head.bias)
-            score_head.weight.zero_()
-            score_head.weight[:, :score_in] = self.score_head.weight[:, :score_in]
-            score_head.bias.copy_(self.score_head.bias)
-        box_head = box_head.to(device=self.box_head.weight.device, dtype=self.box_head.weight.dtype)
-        score_head = score_head.to(device=self.score_head.weight.device, dtype=self.score_head.weight.dtype)
-        self.box_head = box_head
-        self.score_head = score_head
+            objectness = pred_logits.new_ones((batch_size, pred_logits.shape[1]))
+        return pred_boxes, pred_logits, objectness
 
-    def forward(self, images, targets=None, return_outputs=False):
-        self._sync_heads_with_backbone()
-        x = self.backbone(images)
-        x = self.pool(x).flatten(1)
-        pred_boxes = torch.sigmoid(self.box_head(x)).unsqueeze(1)
-        pred_logits = self.score_head(x).unsqueeze(1)
-        scores = torch.softmax(pred_logits.squeeze(1), dim=-1)
+    def _decode_dense_boxes(self, pred_boxes):
+        device = pred_boxes.device
+        dtype = pred_boxes.dtype
+        grid = torch.arange(self.grid_size, device=device, dtype=dtype)
+        yy, xx = torch.meshgrid(grid, grid, indexing='ij')
+        centers = torch.stack((xx, yy), dim=-1).reshape(1, self.grid_size * self.grid_size, 1, 2)
+        centers = centers.repeat(pred_boxes.shape[0], 1, self.per_cell_boxes, 1).reshape(pred_boxes.shape[0], -1, 2)
+        stride = 1.0 / float(self.grid_size)
+        center_xy = (centers + pred_boxes[..., :2]) * stride
+        wh = torch.clamp(pred_boxes[..., 2:], min=self.min_box_size) * stride
+        top_left = torch.clamp(center_xy - 0.5 * wh, min=0.0, max=1.0)
+        bottom_right = torch.clamp(center_xy + 0.5 * wh, min=0.0, max=1.0)
+        decoded = torch.cat([top_left, torch.maximum(top_left + 1e-4, bottom_right)], dim=-1)
+        if decoded.shape[1] > self.num_candidates:
+            decoded = decoded[:, :self.num_candidates]
+        return decoded
+
+    def _build_detections(self, pred_boxes, pred_logits, objectness, image_size):
+        scores = torch.softmax(pred_logits, dim=-1)
         detections = []
-        image_size = images.shape[-1]
         nms_type = getattr(self.config.eval, 'nms_type', 'hard')
         conf_threshold = getattr(self.config.eval, 'conf_threshold', 0.25)
         nms_threshold = getattr(self.config.eval, 'nms_threshold', 0.45)
         max_detections = getattr(self.config.eval, 'max_detections', 300)
         soft_nms_sigma = getattr(self.config.eval, 'soft_nms_sigma', 0.5)
         soft_nms_score_threshold = getattr(self.config.eval, 'soft_nms_score_threshold', 1e-3)
-        for box, score in zip(pred_boxes.squeeze(1), scores):
-            cls_scores = score[:-1]
+        for sample_boxes, sample_scores, sample_objectness in zip(pred_boxes, scores, objectness):
+            cls_scores = sample_scores[..., :-1]
             if cls_scores.numel() == 0:
-                cls_score = score.new_zeros(())
-                cls_label = torch.zeros((), dtype=torch.long, device=score.device)
+                candidate_scores = sample_scores.new_zeros((0,))
+                candidate_labels = torch.zeros((0,), dtype=torch.long, device=sample_scores.device)
+                candidate_boxes = sample_boxes[:0]
             else:
-                cls_score, cls_label = cls_scores.max(dim=0)
-            xyxy = box.clone()
-            xyxy[2:] = torch.maximum(xyxy[:2] + 0.1, xyxy[2:])
-            xyxy = xyxy * image_size
-            boxes, det_scores, labels = postprocess_detections(
-                xyxy.unsqueeze(0),
-                cls_score.unsqueeze(0),
-                cls_label.unsqueeze(0),
+                candidate_scores, candidate_labels = cls_scores.max(dim=-1)
+                candidate_scores = candidate_scores * sample_objectness
+                candidate_boxes = sample_boxes
+            result = postprocess_detections(
+                candidate_boxes * image_size,
+                candidate_scores,
+                candidate_labels,
                 nms_type=nms_type,
                 score_threshold=conf_threshold,
                 iou_threshold=nms_threshold,
                 max_detections=max_detections,
                 soft_nms_sigma=soft_nms_sigma,
                 soft_nms_score_threshold=soft_nms_score_threshold,
+                return_candidates=True,
             )
             detections.append({
-                'boxes': boxes,
-                'scores': det_scores,
-                'labels': labels,
+                'boxes': result.boxes,
+                'scores': result.scores,
+                'labels': result.labels,
+                'candidate_boxes': result.candidate_boxes,
+                'candidate_scores': result.candidate_scores,
+                'candidate_labels': result.candidate_labels,
             })
+        return detections
+
+    def forward(self, images, targets=None, return_outputs=False):
+        x = self.backbone(images)
+        x = self.pool(x)
+        raw_pred_boxes, pred_logits, objectness = self._reshape_dense_predictions(x)
+        pred_boxes = self._decode_dense_boxes(raw_pred_boxes)
+        if pred_logits.shape[1] > self.num_candidates:
+            pred_logits = pred_logits[:, :self.num_candidates]
+            objectness = objectness[:, :self.num_candidates]
+        detections = self._build_detections(pred_boxes, pred_logits, objectness, images.shape[-1])
         if self.training and targets is not None:
             assignments = self.assigner.assign(pred_boxes, pred_logits, targets)
             loss_box = pred_boxes.sum() * 0.0
@@ -305,11 +337,15 @@ class TinyYOLO(nn.Module):
                 'loss_box': loss_box / batch_size,
                 'loss_cls': loss_cls / batch_size,
             }
+            if self.objectness_head is not None:
+                losses['loss_obj'] = objectness.mean() * 0.0
             if return_outputs:
                 return {
                     'losses': losses,
                     'pred_boxes': pred_boxes,
                     'pred_logits': pred_logits,
+                    'objectness': objectness,
+                    'detections': detections,
                 }
             return losses
         if return_outputs:
@@ -317,5 +353,6 @@ class TinyYOLO(nn.Module):
                 'detections': detections,
                 'pred_boxes': pred_boxes,
                 'pred_logits': pred_logits,
+                'objectness': objectness,
             }
         return detections

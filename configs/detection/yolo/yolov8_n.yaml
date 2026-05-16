@@ -12,12 +12,19 @@ model:
   name: yolov8_n
   yolo:
     block: conv
+    num_candidates: 84
+    dense_head:
+      enabled: True
+      grid_size: 7
+      per_cell_boxes: 2
+      use_objectness: True
 assignment:
-  name: first_box
+  name: dynamic_k
   box_loss: l1
   iou_variant: iou
+  dynamic_k_topk: 10
   yolo:
-    name: iou
+    name: dynamic_k
 train:
   batch_size: 8
   optimizer: adamw
@@ -40,6 +47,6 @@ augmentation:
   label_smoothing:
     epsilon: 0.0
 eval:
-  nms_type: hard
+  nms_type: soft
   soft_nms_sigma: 0.5
-  soft_nms_score_threshold: 0.001
+  soft_nms_score_threshold: 0.01

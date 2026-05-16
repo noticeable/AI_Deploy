@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.ao.quantization as quantization
 
-from pytorch_object_detection.models.postprocess import postprocess_detections
 from pytorch_image_classification.models.qat_common import (
     QATStateController,
     apply_qat_epoch_controls,
@@ -95,43 +94,13 @@ class QuantizableTinyYOLO(nn.Module):
                 module.fuse_model()
 
     def _run_heads(self, x, image_size, targets=None, return_outputs=False):
-        x = self.float_pool(x).flatten(1)
-        pred_boxes = torch.sigmoid(self.box_head(x)).unsqueeze(1)
-        pred_logits = self.score_head(x).unsqueeze(1)
-        scores = torch.softmax(pred_logits.squeeze(1), dim=-1)
-        detections = []
-        nms_type = getattr(self.assigner.config.eval, 'nms_type', 'hard')
-        conf_threshold = getattr(self.assigner.config.eval, 'conf_threshold', 0.25)
-        nms_threshold = getattr(self.assigner.config.eval, 'nms_threshold', 0.45)
-        max_detections = getattr(self.assigner.config.eval, 'max_detections', 300)
-        soft_nms_sigma = getattr(self.assigner.config.eval, 'soft_nms_sigma', 0.5)
-        soft_nms_score_threshold = getattr(self.assigner.config.eval, 'soft_nms_score_threshold', 1e-3)
-        for box, score in zip(pred_boxes.squeeze(1), scores):
-            cls_scores = score[:-1]
-            if cls_scores.numel() == 0:
-                cls_score = score.new_zeros(())
-                cls_label = torch.zeros((), dtype=torch.long, device=score.device)
-            else:
-                cls_score, cls_label = cls_scores.max(dim=0)
-            xyxy = box.clone()
-            xyxy[2:] = torch.maximum(xyxy[:2] + 0.1, xyxy[2:])
-            xyxy = xyxy * image_size
-            boxes, det_scores, labels = postprocess_detections(
-                xyxy.unsqueeze(0),
-                cls_score.unsqueeze(0),
-                cls_label.unsqueeze(0),
-                nms_type=nms_type,
-                score_threshold=conf_threshold,
-                iou_threshold=nms_threshold,
-                max_detections=max_detections,
-                soft_nms_sigma=soft_nms_sigma,
-                soft_nms_score_threshold=soft_nms_score_threshold,
-            )
-            detections.append({
-                'boxes': boxes,
-                'scores': det_scores,
-                'labels': labels,
-            })
+        x = self.float_pool(x)
+        raw_pred_boxes, pred_logits, objectness = self._reshape_dense_predictions(x)
+        pred_boxes = self._decode_dense_boxes(raw_pred_boxes)
+        if pred_logits.shape[1] > self.num_candidates:
+            pred_logits = pred_logits[:, :self.num_candidates]
+            objectness = objectness[:, :self.num_candidates]
+        detections = self._build_detections(pred_boxes, pred_logits, objectness, image_size)
         if self.training and targets is not None:
             assignments = self.assigner.assign(pred_boxes, pred_logits, targets)
             loss_box = pred_boxes.sum() * 0.0
@@ -156,11 +125,15 @@ class QuantizableTinyYOLO(nn.Module):
                 'loss_box': loss_box / batch_size,
                 'loss_cls': loss_cls / batch_size,
             }
+            if self.objectness_head is not None:
+                losses['loss_obj'] = objectness.mean() * 0.0
             if return_outputs:
                 return {
                     'losses': losses,
                     'pred_boxes': pred_boxes,
                     'pred_logits': pred_logits,
+                    'objectness': objectness,
+                    'detections': detections,
                 }
             return losses
         if return_outputs:
@@ -168,6 +141,7 @@ class QuantizableTinyYOLO(nn.Module):
                 'detections': detections,
                 'pred_boxes': pred_boxes,
                 'pred_logits': pred_logits,
+                'objectness': objectness,
             }
         return detections
 

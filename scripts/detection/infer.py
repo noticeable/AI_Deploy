@@ -45,6 +45,9 @@ def main():
                         'boxes': detections['boxes'].detach().cpu().tolist(),
                         'scores': detections['scores'].detach().cpu().tolist(),
                         'labels': detections['labels'].detach().cpu().tolist(),
+                        'candidate_boxes': detections.get('candidate_boxes', torch.empty(0, 4)).detach().cpu().tolist(),
+                        'candidate_scores': detections.get('candidate_scores', torch.empty(0)).detach().cpu().tolist(),
+                        'candidate_labels': detections.get('candidate_labels', torch.empty(0, dtype=torch.long)).detach().cpu().tolist(),
                     },
                     output_path,
                     class_names=config.dataset.class_names)

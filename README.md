@@ -128,6 +128,12 @@ python tools/smoke_test_prune_det_seg_pagcp.py
 python scripts/detection/train.py --config configs/detection/yolo/yolov8_n.yaml
 ```
 
+当前默认 YOLO 检测路径已切到 dense candidate head：
+- 默认不再走 `first_box`
+- 默认使用 `assignment.yolo.name=dynamic_k`
+- 默认 `eval.nms_type=soft`，Soft-NMS 现在会在真实候选集合上生效
+- 若需要导出 ONNX，请显式覆盖为 `eval.nms_type hard`
+
 评估 YOLO：
 
 ```bash
@@ -152,6 +158,7 @@ python scripts/detection/infer.py --config configs/detection/detr/detr_r50.yaml 
 
 ```bash
 python scripts/detection/export.py --config configs/detection/yolo/yolov8_n.yaml \
+    eval.nms_type hard \
     export.output_file outputs/yolov8_n.onnx
 ```
 
